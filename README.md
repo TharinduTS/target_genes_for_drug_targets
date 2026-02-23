@@ -48,7 +48,7 @@ Map free‑text **target names** (e.g., “Muscle‑type nicotinic acetylcholine
 pip install pandas openpyxl requests
 ```
 
-Usage
+## Usage
 ```
 python chembl_target_genes_from_names.py \
   --input <file.xlsx> \
@@ -58,7 +58,7 @@ python chembl_target_genes_from_names.py \
   [--allow-nonhuman] \
   [--requests-per-sec <N>]
 ```
-Required arguments
+## Required arguments
 ```
 --input FILE
 Path to input Excel (.xlsx) containing target names.
@@ -90,7 +90,7 @@ Throttle API calls (default: 5 requests/sec).
 -h, --help
 Show help and exit.
 ```
-Example
+## Example
 ```
 
 python chembl_target_genes_from_names.py \
@@ -99,7 +99,7 @@ python chembl_target_genes_from_names.py \
   --name-col "Target Name" \
   --out genes_by_target.xlsx
 ```
- Output
+## Output
 ```
 The script produces an Excel file with one row per matched target–gene pair:
 
@@ -118,7 +118,7 @@ Notes
 Protein complexes (e.g., nicotinic receptors, integrins) return multiple gene symbols—one row per subunit.
 Families/selectivity groups and non‑protein targets (e.g., DNA, heparan sulfate) will have no single gene symbol; you can filter by target_type after export.
 ```
-*Politeness & Reliability*
+## *Politeness & Reliability*
 
 The script rate‑limits requests (default 5 req/s) and adds simple retry/backoff for transient HTTP errors.
 Increase/decrease with --requests-per-sec depending on your network and API responsiveness.
