@@ -36,7 +36,7 @@ and then ran the script
 # CLI help
 
 
-# chembl_target_genes_from_names.py — CLI Help
+chembl_target_genes_from_names.py — CLI Help
 
 Map free‑text **target names** (e.g., “Muscle‑type nicotinic acetylcholine receptor”) to curated **ChEMBL targets** and extract **HGNC gene symbols** + **UniProt accessions** using the official ChEMBL REST API (`/target`, `/target_component`).
 
