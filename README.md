@@ -2,455 +2,405 @@
 
 # Introduction
 
-I downloaded a list of drug targets for humans from 'https://www.ebi.ac.uk/chembl/explore/drug_mechanisms/STATE_ID:vZE8QPzTY1YchWXcushDsw%3D%3D' and extracted a unique list of target names (like 'Muscle-type nicotinic acetylcholine receptor'). I am using following script to extract genes that are targeted by these from ChEMBL.
+I am trying to see whether there is a connection between the success of drugs (whether they made into testing phases 2,3,4 etc) and the cell specificity of their drug targets.
 
-But first I installed needed package inside my environment
+I started by downloading the list of drugs with their MOA (Mechanism of Action) for humans from 'https://www.ebi.ac.uk/chembl/explore/drug_mechanisms/STATE_ID:YB5SeM-jQgB2RiRcCSv8sA%3D%3D'
 
-# Preparation
-```
-module load gcc arrow
-module load python
-python -m venv ~/envs/scanpy
-source ~/envs/scanpy/bin/activate
-```
+The download looks like following
 
-```
-pip install pandas openpyxl requests
+```tsv
+"Parent Molecule ChEMBL ID"     "Parent Molecule Name"  "Parent Molecule Type"  "Max Phase"     "First Approval"        "USAN Stem"     "Smiles"        "Mechanism of Action"   "Mechanism Comment"       "Selectivity Comment"   "Target ChEMBL ID"      "Target Name"   "Action Type"   "Target Type"   "Target Organism"       "Binding Site Name"     "Binding Site Comment"    "References"    "Synonyms"      "Parent Molecule ChEMBL ID"
+"CHEMBL360055"  "GALLAMINE"     "Small molecule"        "4"     "1982"  ""      "CC[N+](CC)(CC)CCOc1cccc(OCC[N+](CC)(CC)CC)c1OCC[N+](CC)(CC)CC" "Muscle-type nicotinic acetylcholine receptor antagonist" "non-depolarizing"      ""      "CHEMBL2362997" "Muscle-type nicotinic acetylcholine receptor"  "ANTAGONIST"    "PROTEIN COMPLEX GROUP" "Homo sapiens"  ""        ""      "{'CHEMBL1200993': [{'ref_id': '9780702034718 PP. 164', 'ref_url': 'http://www.isbnsearch.org/isbn/9780702034718', 'ref_type': 'ISBN'}]}"       "Gallamine triethiodide (INN)|"   "CHEMBL360055"
+"CHEMBL1259"    "METOCURINE"    "Small molecule"        "4"     "1982"  "'-ium'"        "COc1ccc2cc1Oc1cc3c(cc1OC)CC[N+](C)(C)[C@H]3Cc1ccc(cc1)Oc1c(OC)c(OC)cc3c1[C@@H](C2)[N+](C)(C)CC3" "Muscle-type nicotinic acetylcholine receptor antagonist"       ""      ""      "CHEMBL2362997" "Muscle-type nicotinic acetylcholine receptor"  "ANTAGONIST"    "PROTEIN COMPLEX GROUP"   "Homo sapiens"  ""      ""      "{'CHEMBL1739': [{'ref_id': '18633030', 'ref_url': 'http://europepmc.org/abstract/MED/18633030', 'ref_type': 'PubMed'}, {'ref_id': 'Dimethyltubocurarine', 'ref_url': 'http://en.wikipedia.org/wiki/Dimethyltubocurarine', 'ref_type': 'Wikipedia'}]}"    "Metocurine iodide (USAN, USP)|Dimethyltubocurarinium chloride (INN)|"    "CHEMBL1259"
 ```
 
-copied the excel file that looks like following to the same directory
+*and renamed the file to drug_targets.tsv*
 
-```excel
-Target Name
-Muscle-type nicotinic acetylcholine receptor
-Tyrosine-protein kinase ABL1
-Beta-1 adrenergic receptor
-Heparan sulfate
-Sphingosine 1-phosphate receptor 1
-Monoamine transporter
-<img width="129" height="141" alt="image" src="https://github.com/user-attachments/assets/7149bd4d-4860-4840-bcc9-aefcf4a683c5" />
-```
-and then ran the script
+Then I wanted to find genes each of these drugs affect.
 
+for that, I can use the "Target ChEMBL ID" and search it in their target database like 'https://www.ebi.ac.uk/chembl/explore/target/CHEMBL2362997' , changing Target ChEMBL ID. It has the genes those drugs affect under the section '#GeneCrossRefs'
 
-# CLI help
+*Note that this is not the same as "Parent Molecule ChEMBL ID"*
 
+Because I had thousands of targets, I wanted to automate it and wrote the script 'chembl_target_scraper.py'
 
-chembl_target_genes_from_names.py — CLI Help
+This automatically adds genes affected by each gene in front of each gene seperated by commas.
 
-Map free‑text **target names** (e.g., “Muscle‑type nicotinic acetylcholine receptor”) to curated **ChEMBL targets** and extract **HGNC gene symbols** + **UniProt accessions** using the official ChEMBL REST API (`/target`, `/target_component`).
+# Script
 
----
-
-## 🔧 Installation
-
-```bash
-pip install pandas openpyxl requests
-```
-
-## Usage
-```
-python chembl_target_genes_from_names.py \
-  --input <file.xlsx> \
-  --name-col <column> \
-  --out <output.xlsx> \
-  [--sheet <sheet_name>] \
-  [--allow-nonhuman] \
-  [--requests-per-sec <N>]
-```
-## Required arguments
-```
---input FILE
-Path to input Excel (.xlsx) containing target names.
-
-
---name-col COLUMN
-Column name holding the target names.
-
-
---out FILE
-Output Excel (.xlsx) to write results.
-
-
-Optional arguments
-
-
---sheet NAME
-Worksheet name (default: first sheet).
-
-
---allow-nonhuman
-Include non‑human targets (default: human‑only).
-
-
---requests-per-sec N
-Throttle API calls (default: 5 requests/sec).
-
-
--h, --help
-Show help and exit.
-```
-## Example
-```
-
-python chembl_target_genes_from_names.py \
-  --input target_list_for_genes.xlsx \
-  --sheet Sheet1 \
-  --name-col "Target Name" \
-  --out genes_by_target.xlsx
-```
-## Output
-```
-The script produces an Excel file with one row per matched target–gene pair:
-
-input_target_name — the original name from your file
-matched_target_pref_name — curated ChEMBL target preferred name
-target_chembl_id — the ChEMBL target ID
-target_type — e.g., SINGLE PROTEIN, PROTEIN COMPLEX, FAMILY, NON‑PROTEIN
-organism — typically Homo sapiens (unless --allow-nonhuman)
-gene_symbol — HGNC gene symbol (multiple rows for complexes/subunits)
-uniprot_accession — UniProt accession for the component
-evidence — direct API URLs used for the mapping
-
-
-Notes
-
-Protein complexes (e.g., nicotinic receptors, integrins) return multiple gene symbols—one row per subunit.
-Families/selectivity groups and non‑protein targets (e.g., DNA, heparan sulfate) will have no single gene symbol; you can filter by target_type after export.
-```
-## *Politeness & Reliability*
-
-The script rate‑limits requests (default 5 req/s) and adds simple retry/backoff for transient HTTP errors.
-Increase/decrease with --requests-per-sec depending on your network and API responsiveness.
-
-# Run Command
-
-```
-python chembl_target_genes_from_names.py \
-  --input target_list_for_genes.xlsx \
-  --sheet Sheet1 \
-  --name-col "Target Name" \
-  --out genes_by_target.xlsx \
-  --requests-per-sec 50
-```
-
-# Script 
-
-chembl_target_genes_from_names.py
+chembl_target_scraper.py
 
 ```py
 
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Map free-text target names to ChEMBL target gene symbols (HGNC) and UniProt accessions.
-
-Workflow per input name:
-  1) Search ChEMBL targets by curated preferred name (case-insensitive) using /chembl/api/data/target
-  2) Fallback: broader full-text search with 'search' if needed
-  3) Retrieve components of each matched target via /chembl/api/data/target_component
-  4) Extract gene symbols (from component_synonyms) and UniProt accessions
-  5) Output an Excel with one row per (input_name × matched_target × gene)
-
-ChEMBL REST API docs & explorer:
-- https://www.ebi.ac.uk/chembl/api/data/docs (live resource list and filter syntax)  [used: target, target_component]  # [1](https://chembl.blogspot.com/2023/03/what-is-max-phase-in-chembl.html)
-- https://chembl.gitbook.io/chembl-interface-documentation/web-services/chembl-data-web-services  # [2](https://www.ebi.ac.uk/chembl/explore/target/CHEMBL3350223)
-"""
 
 import argparse
-import sys
-import time
-from typing import Dict, List, Optional, Tuple
+import asyncio
+import json
+import os
+import re
+from typing import Dict, List, Any, Optional
 
+import aiohttp
 import pandas as pd
-import requests
-
-# ----------------------------
-# Config
-# ----------------------------
-BASE = "https://www.ebi.ac.uk/chembl/api/data"
-REQS_PER_SEC = 5.0          # polite default; adjust with --requests-per-sec
-TIMEOUT = 30                # seconds
-MAX_PAGE = 1000             # API pagination page size
-MAX_RETRIES = 5             # transient HTTP retries
-BACKOFF_SECS = 0.8          # base backoff
-
-# HTTP session
-session = requests.Session()
-session.headers.update({"User-Agent": "chembl-target-gene-mapper/1.1 (+research use)"})
+from tqdm import tqdm
 
 
-def _throttle():
-    time.sleep(1.0 / max(REQS_PER_SEC, 0.1))
+# =================
+# I/O: table utils
+# =================
+
+def read_table(path: str) -> pd.DataFrame:
+    lower = path.lower()
+    if lower.endswith((".tsv", ".txt")):
+        return pd.read_csv(path, sep="\t")
+    if lower.endswith(".csv"):
+        return pd.read_csv(path)
+    if lower.endswith(".xlsx"):
+        return pd.read_excel(path, engine="openpyxl")
+    if lower.endswith(".xls"):
+        return pd.read_excel(path, engine="xlrd")
+    raise ValueError("Unsupported input format. Use .tsv/.csv/.xlsx/.xls")
 
 
-def _request_with_retry(url: str, params: Dict = None) -> requests.Response:
-    """GET with basic retry/backoff for transient errors."""
-    params = params or {}
-    attempt = 0
-    while True:
-        _throttle()
-        try:
-            r = session.get(url, params=params, timeout=TIMEOUT)
-            if r.status_code in (429, 500, 502, 503, 504):
-                # backoff and retry
-                attempt += 1
-                if attempt > MAX_RETRIES:
-                    r.raise_for_status()
-                time.sleep(BACKOFF_SECS * (2 ** (attempt - 1)))
-                continue
-            r.raise_for_status()
-            return r
-        except requests.RequestException as e:
-            attempt += 1
-            if attempt > MAX_RETRIES:
-                raise
-            time.sleep(BACKOFF_SECS * (2 ** (attempt - 1)))
+def write_table(df: pd.DataFrame, path: str) -> None:
+    lower = path.lower()
+    if lower.endswith((".tsv", ".txt")):
+        df.to_csv(path, sep="\t", index=False)
+    elif lower.endswith(".csv"):
+        df.to_csv(path, index=False)
+    elif lower.endswith(".xlsx"):
+        df.to_excel(path, index=False, engine="openpyxl")
+    else:
+        raise ValueError("Unsupported output format. Use .tsv/.csv/.xlsx")
 
 
-def paged_get(url: str, params: Dict = None) -> List[Dict]:
-    """
-    GET with ChEMBL REST-style pagination (limit/offset).
-    Tries to infer the list payload key (e.g., 'targets', 'target_components').
-    """
+# ===============================
+# API JSON → cross-ref extraction
+# ===============================
+
+# Normalize different source labels to canonical keys
+SRC_NORMALIZE = {
+    # Genes
+    "HGNC": "HGNC",
+    # Proteins
+    "UNIPROT": "UniProt",
+    "UNIPROTKB": "UniProt",
+    "UNIPROT/UNIPROTKB": "UniProt",
+    # Ensembl
+    "ENSEMBL": "Ensembl",
+    "ENSEMBLGENE": "Ensembl",
+    "ENSEMBLGENEID": "Ensembl",
+    # Domains
+    "PFAM": "Pfam",
+    "PFAMA": "Pfam",       # sometimes appears as "Pfam-A"
+    "PFAM-A": "Pfam",
+    "INTERPRO": "InterPro",
+}
+
+CANON_KEYS = ["HGNC", "UniProt", "Ensembl", "Pfam", "InterPro"]
+
+def _dedupe_keep_order(items: List[str]) -> List[str]:
+    seen = set()
     out = []
-    offset = 0
-    while True:
-        q = dict(params or {})
-        q.update({"limit": MAX_PAGE, "offset": offset})
-        r = _request_with_retry(url, q)
-        data = r.json()
-
-        # Determine list payload
-        payload = None
-        for key in ("targets", "target_components", "mechanisms", "molecules", "activities"):
-            if isinstance(data, dict) and key in data:
-                payload = data[key]
-                break
-
-        if payload is None:
-            if isinstance(data, list):
-                payload = data
-            elif isinstance(data, dict):
-                for v in data.values():
-                    if isinstance(v, list):
-                        payload = v
-                        break
-
-        if not payload:
-            break
-
-        out.extend(payload)
-        if len(payload) < MAX_PAGE:
-            break
-        offset += MAX_PAGE
-
+    for it in items:
+        if it not in seen:
+            out.append(it)
+            seen.add(it)
     return out
 
+def _clean_val(val: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]", "", val or "")
 
-def search_targets_by_pref_name_icontains(name: str) -> List[Dict]:
-    """Primary lookup: curated preferred name (case-insensitive contains)."""
-    url = f"{BASE}/target.json"
-    params = {"pref_name__icontains": name}
-    return paged_get(url, params)
-
-
-def search_targets_by_fulltext(name: str) -> List[Dict]:
-    """Fallback: broader full-text search if pref_name query returned no matches."""
-    url = f"{BASE}/target.json"
-    params = {"search": name}
-    return paged_get(url, params)
-
-
-def get_target_components(target_chembl_id: str) -> List[Dict]:
-    """Retrieve UniProt + synonyms (incl. HGNC gene symbols) for a target."""
-    url = f"{BASE}/target_component.json"
-    params = {"target_chembl_id": target_chembl_id}
-    return paged_get(url, params)
-
-
-def pick_best_targets(
-    candidates: List[Dict],
-    query_name: str,
-    restrict_human: bool = True
-) -> List[Dict]:
+def _get_target_object(api_json: Any) -> Optional[Dict[str, Any]]:
     """
-    Heuristic ranking/filtering:
-      1) Keep Homo sapiens when possible (unless --allow-nonhuman)
-      2) Exact (case-insensitive) match on pref_name preferred
-      3) Otherwise, return all remaining candidates
+    The /target/<ID>.json endpoint typically returns a single target object.
+    Be tolerant to slight variations: {'target': {...}} or {'targets': [...]}.
     """
-    if not candidates:
-        return []
+    if isinstance(api_json, dict):
+        if "target_components" in api_json:
+            return api_json
+        if "target" in api_json and isinstance(api_json["target"], dict):
+            return api_json["target"]
+        if "targets" in api_json and isinstance(api_json["targets"], list) and api_json["targets"]:
+            return api_json["targets"][0]
+    return None
 
-    if restrict_human:
-        # Keep human (and also allow None organism for higher-level types)
-        c2 = [t for t in candidates if (t.get("organism") == "Homo sapiens" or t.get("organism") is None)]
-        if c2:
-            candidates = c2
-
-    # Exact match on pref_name (case-insensitive)
-    exact = [t for t in candidates if str(t.get("pref_name", "")).strip().lower() == query_name.strip().lower()]
-    if exact:
-        return exact
-
-    return candidates
-
-
-def extract_gene_symbols_from_components(components: List[Dict]) -> List[Tuple[Optional[str], Optional[str]]]:
+def extract_xrefs_from_api_json(api_json: Any) -> Dict[str, List[str]]:
     """
-    From target components, extract [(gene_symbol, uniprot_accession), ...]
-    Gene symbol is read from component_synonyms with syn_type containing 'GENE_SYMBOL'/'HGNC SYMBOL'.
+    Parse the API JSON for a single target and collect HGNC/UniProt/Ensembl/Pfam/InterPro
+    from target_components → target_component_xrefs.
+    NOTE (fix): accept both 'xref_src' and 'xref_src_db'; for HGNC prefer 'xref_name' (gene symbol).
     """
-    out: List[Tuple[Optional[str], Optional[str]]] = []
+    refs: Dict[str, List[str]] = {k: [] for k in CANON_KEYS}
+    tgt = _get_target_object(api_json)
+    if not tgt:
+        return refs
+
+    components = tgt.get("target_components") or []
     for comp in components:
-        acc = comp.get("accession")  # UniProt
-        syns = comp.get("component_synonyms") or []
-        gene_syms = []
+        xrefs = comp.get("target_component_xrefs") or []
+        for x in xrefs:
+            # Some payloads use 'xref_src', others 'xref_src_db'
+            src_raw = (x.get("xref_src") or x.get("xref_src_db") or "").strip()
+            if not src_raw:
+                continue
 
-        for s in syns:
-            syn = s.get("component_synonym")
-            typ = (s.get("syn_type") or "").upper()
-            if "GENE_SYMBOL" in typ or "HGNC" in typ:
-                if syn:
-                    gene_syms.append(syn)
+            norm_key = SRC_NORMALIZE.get(src_raw.replace(" ", "").replace("-", "").upper())
+            if norm_key not in refs:
+                continue
 
-        # conservative fallback if nothing labeled as gene symbol
-        if not gene_syms:
-            for s in syns:
-                syn = s.get("component_synonym", "")
-                if syn.isupper() and 2 <= len(syn) <= 12 and syn.replace("-", "").isalpha():
-                    gene_syms.append(syn)
+            # Value strategy:
+            # - HGNC → prefer gene symbol in xref_name; fallback to xref_id.
+            # - Others → prefer accession-like xref_id; fallback to xref_name.
+            if norm_key == "HGNC":
+                val_raw = (x.get("xref_name") or x.get("xref_id") or "").strip()
+            else:
+                val_raw = (x.get("xref_id") or x.get("xref_name") or "").strip()
 
-        if not gene_syms:
-            gene_syms = [None]
+            val = _clean_val(val_raw)
+            if val:
+                refs[norm_key].append(val)
 
-        for g in gene_syms:
-            out.append((g, acc))
-
-    # De-duplicate
-    seen = set()
-    uniq: List[Tuple[Optional[str], Optional[str]]] = []
-    for g, a in out:
-        key = (g or "", a or "")
-        if key not in seen:
-            uniq.append((g, a))
-            seen.add(key)
-    return uniq
+    for k in refs:
+        refs[k] = _dedupe_keep_order(refs[k])
+    return refs
 
 
-def process_targets(
-    df: pd.DataFrame,
-    name_col: str,
-    restrict_human: bool = True
-) -> pd.DataFrame:
-    records = []
+# ===================
+# Async HTTP fetching
+# ===================
 
-    for idx, row in df.iterrows():
-        raw_name = str(row[name_col]).strip()
-        if not raw_name or raw_name.lower() in {"nan", "none"}:
-            continue
+def build_api_url(target_id: str) -> str:
+    # Official REST endpoint (JSON): https://www.ebi.ac.uk/chembl/api/data/target/<ID>.json
+    return f"https://www.ebi.ac.uk/chembl/api/data/target/{target_id}.json"
 
-        # 1) narrow search on curated preferred name
-        candidates = search_targets_by_pref_name_icontains(raw_name)
-        # 2) fallback to a broader full-text search
-        if not candidates:
-            candidates = search_targets_by_fulltext(raw_name)
+async def fetch_one(
+    session: aiohttp.ClientSession,
+    target_id: str,
+    timeout: float,
+    retries: int,
+    delay: float
+) -> Optional[Dict[str, List[str]]]:
+    url = build_api_url(target_id)
+    for attempt in range(retries + 1):
+        try:
+            async with session.get(url, timeout=timeout) as resp:
+                if resp.status == 200:
+                    data = await resp.json(content_type=None)
+                    refs = extract_xrefs_from_api_json(data)
+                    if delay > 0:
+                        await asyncio.sleep(delay)
+                    return refs
+                elif resp.status in (404, 410):
+                    return None
+                else:
+                    await asyncio.sleep(0.5 * (attempt + 1))
+        except Exception:
+            await asyncio.sleep(0.5 * (attempt + 1))
+    return None
 
-        best = pick_best_targets(candidates, raw_name, restrict_human=restrict_human)
+async def scrape_all(
+    target_ids: List[str],
+    user_agent: str,
+    timeout: float,
+    retries: int,
+    parallel: int,
+    delay: float,
+    cache: Dict[str, Dict[str, List[str]]]
+) -> Dict[str, Optional[Dict[str, List[str]]]]:
+    results: Dict[str, Optional[Dict[str, List[str]]]] = {}
+    headers = {"User-Agent": user_agent, "Accept": "application/json"}
+    connector = aiohttp.TCPConnector(limit=parallel)
 
-        if not best:
-            records.append({
-                "input_target_name": raw_name,
-                "matched_target_pref_name": None,
-                "target_chembl_id": None,
-                "target_type": None,
-                "organism": None,
-                "gene_symbol": None,
-                "uniprot_accession": None,
-                "evidence": None
-            })
-            continue
+    async with aiohttp.ClientSession(headers=headers, connector=connector) as session:
+        sem = asyncio.Semaphore(parallel)
 
-        for t in best:
-            tchembl = t.get("target_chembl_id") or t.get("chembl_id")
-            pref = t.get("pref_name")
-            ttype = t.get("target_type")
-            org = t.get("organism")
+        async def worker(tid: str):
+            if tid in cache:
+                return tid, cache[tid]
+            async with sem:
+                refs = await fetch_one(session, tid, timeout, retries, delay)
+                if refs is not None:
+                    cache[tid] = refs
+                return tid, refs
 
-            comps = get_target_components(tchembl) if tchembl else []
-            genes = extract_gene_symbols_from_components(comps) if comps else [(None, None)]
+        tasks = [worker(tid) for tid in target_ids]
+        for fut in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc="Fetching from ChEMBL API"):
+            tid, refs = await fut
+            results[tid] = refs
+    return results
 
-            # Evidence URLs for traceability
-            target_url = f"{BASE}/target.json?target_chembl_id={tchembl}" if tchembl else None
-            comp_url = f"{BASE}/target_component.json?target_chembl_id={tchembl}" if tchembl else None
-            ev = ";".join([u for u in [target_url, comp_url] if u])
 
-            for gene_symbol, acc in genes:
-                records.append({
-                    "input_target_name": raw_name,
-                    "matched_target_pref_name": pref,
-                    "target_chembl_id": tchembl,
-                    "target_type": ttype,
-                    "organism": org,
-                    "gene_symbol": gene_symbol,
-                    "uniprot_accession": acc,
-                    "evidence": ev
-                })
-
-    out_df = pd.DataFrame.from_records(records)
-    # Sort for readability
-    sort_cols = ["input_target_name", "matched_target_pref_name", "target_chembl_id", "gene_symbol"]
-    have_cols = [c for c in sort_cols if c in out_df.columns]
-    if have_cols:
-        out_df = out_df.sort_values(have_cols, kind="stable").reset_index(drop=True)
-    return out_df
-
+# =====
+# Main
+# =====
 
 def main():
-    global REQS_PER_SEC  # <-- Fix: declare global at the top before any references
+    parser = argparse.ArgumentParser(
+        description="ChEMBL Target cross-refs (HGNC/UniProt/Ensembl/Pfam/InterPro) via REST API (async, cached)"
+    )
+    parser.add_argument("-i", "--input", required=True, help="Input table (.tsv/.csv/.xlsx/.xls)")
+    parser.add_argument("-o", "--output", required=True, help="Output table (.tsv/.csv/.xlsx)")
+    parser.add_argument("-c", "--id-column", required=True, help="Column with Target ChEMBL IDs")
+    parser.add_argument("--output-prefix", default="ChEMBL", help="Prefix for new columns (default: ChEMBL)")
+    parser.add_argument("--timeout", type=float, default=12.0, help="HTTP timeout per request (s)")
+    parser.add_argument("--retries", type=int, default=2, help="Retry attempts per target")
+    parser.add_argument("--parallel", type=int, default=12, help="Max concurrent requests")
+    parser.add_argument("--delay", type=float, default=0.0, help="Delay after each response per worker (s)")
+    parser.add_argument("--user-agent", default="Mozilla/5.0", help="Custom User-Agent")
+    parser.add_argument("--cache", default="chembl_cache.json", help="Path to JSON cache file")
+    parser.add_argument("--verbose", action="store_true", help="Verbose logging")
+    args = parser.parse_args()
 
-    p = argparse.ArgumentParser(description="Map target names to gene symbols via ChEMBL.")
-    p.add_argument("--input", required=True, help="Path to input Excel (.xlsx)")
-    p.add_argument("--sheet", default=None, help="Worksheet name (default: first sheet)")
-    p.add_argument("--name-col", required=True, help="Column name containing target names")
-    p.add_argument("--out", required=True, help="Output Excel filename (.xlsx)")
-    p.add_argument("--allow-nonhuman", action="store_true", help="Do not restrict to Homo sapiens")
-    p.add_argument("--requests-per-sec", type=float, default=REQS_PER_SEC,
-                   help="Throttle rate for API calls (default 5 req/s)")
-    args = p.parse_args()
+    # Load table
+    df = read_table(args.input)
 
-    # Apply user-specified rate
-    if args.requests_per_sec and args.requests_per_sec > 0:
-        REQS_PER_SEC = args.requests_per_sec
+    # Normalize headers (strip spaces)
+    df.rename(columns={c: c.strip() for c in df.columns}, inplace=True)
 
-    # Read Excel
+    # Tolerant match for id column
+    if args.id_column not in df.columns:
+        candidates = [c for c in df.columns if c.strip().lower() == args.id_column.strip().lower()]
+        if candidates:
+            args.id_column = candidates[0]
+        else:
+            raise KeyError(f"Column '{args.id_column}' not found. Available: {list(df.columns)}")
+
+    # Prepare output columns
+    for key in CANON_KEYS:
+        col = f"{args.output_prefix}_{key}"
+        if col not in df.columns:
+            df[col] = ""
+
+    # Unique, clean target IDs
+    target_ids = (
+        df[args.id_column]
+        .dropna()
+        .astype(str)
+        .map(str.strip)
+        .replace({"": None, "nan": None, "None": None})
+        .dropna()
+        .unique()
+        .tolist()
+    )
+
+    # Load cache
+    cache: Dict[str, Dict[str, List[str]]] = {}
+    if os.path.exists(args.cache):
+        try:
+            with open(args.cache, "r", encoding="utf-8") as f:
+                cache = json.load(f)
+        except Exception:
+            cache = {}
+
+    # Fetch in parallel (API)
+    results = asyncio.run(
+        scrape_all(
+            target_ids=target_ids,
+            user_agent=args.user_agent,
+            timeout=args.timeout,
+            retries=args.retries,
+            parallel=args.parallel,
+            delay=args.delay,
+            cache=cache,
+        )
+    )
+
+    # Save/refresh cache
     try:
-        df = pd.read_excel(args.input, sheet_name=args.sheet, engine="openpyxl")
-    except Exception as e:
-        print(f"Failed to read Excel: {e}", file=sys.stderr)
-        sys.exit(1)
+        with open(args.cache, "w", encoding="utf-8") as f:
+            json.dump(cache, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
 
-    if args.name_col not in df.columns:
-        print(f"Column '{args.name_col}' not found in {args.input}. Columns: {list(df.columns)}", file=sys.stderr)
-        sys.exit(1)
+    # Fill rows
+    prefix = args.output_prefix
+    for idx, row in df.iterrows():
+        tid = str(row.get(args.id_column, "")).strip()
+        if not tid:
+            continue
+        refs = results.get(tid)
+        if not refs:
+            continue
+        for key in CANON_KEYS:
+            df.at[idx, f"{prefix}_{key}"] = ", ".join(refs.get(key, []))
 
-    # Process
-    out_df = process_targets(df, args.name_col, restrict_human=(not args.allow_nonhuman))
+    # Write output
+    write_table(df, args.output)
 
-    # Write Excel
-    try:
-        with pd.ExcelWriter(args.out, engine="openpyxl") as xw:
-            out_df.to_excel(xw, index=False, sheet_name="genes_by_target")
-    except Exception as e:
-        print(f"Failed to write output Excel: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Done. Wrote {len(out_df)} rows to {args.out}")
-
+    if args.verbose:
+        print(f"Done. Output written to: {args.output}")
 
 if __name__ == "__main__":
     main()
+```
+
+# CLI help
+
+```txt
+
+chembl_target_scraper.py
+------------------------
+
+Fetch HGNC gene symbols and other cross‑references (UniProt, Ensembl, Pfam,
+InterPro) for each ChEMBL Target ID in a table. Uses the official ChEMBL
+REST API and runs requests in parallel with caching.
+
+USAGE:
+  python chembl_target_scraper.py -i INPUT -o OUTPUT -c COLUMN [options]
+
+REQUIRED ARGUMENTS:
+  -i, --input FILE          Input table (.tsv, .csv, .xlsx, .xls)
+  -o, --output FILE         Output table (.tsv, .csv, .xlsx)
+  -c, --id-column NAME      Column containing Target ChEMBL IDs
+                            (e.g. "CHEMBL2362997")
+
+OPTIONAL ARGUMENTS:
+  --output-prefix STR       Prefix for new columns (default: "ChEMBL")
+  --parallel N              Max concurrent requests (default: 12)
+  --timeout SEC             Request timeout (default: 12)
+  --retries N               Retry attempts per target (default: 2)
+  --delay SEC               Delay after each request (default: 0)
+  --cache FILE              JSON cache file (default: chembl_cache.json)
+  --user-agent STRING       Custom User-Agent header
+  --refresh                 Ignore cache and refetch all targets
+  --verbose                 Print progress details
+
+OUTPUT COLUMNS ADDED:
+  <prefix>_HGNC
+  <prefix>_UniProt
+  <prefix>_Ensembl
+  <prefix>_Pfam
+  <prefix>_InterPro
+
+EXAMPLE:
+  python chembl_target_scraper.py \
+      -i targets.tsv \
+      -o targets_with_genes.tsv \
+      -c "Target ChEMBL ID" \
+      --parallel 16 \
+      --refresh \
+      --verbose
+```
+# Run command
+
+I ran it like following.
+
+*Note that I always start by removing cache as otherwise it does not really update the whole result*
+
+```bash
+rm chembl_cache.json
+python chembl_target_scraper.py \
+  -i drug_targets.tsv \
+  -o drug_targets_with_genes.tsv \
+  -c "Target ChEMBL ID" \
+  --output-prefix "ChEMBL" \
+  --parallel 16 \
+  --timeout 12 \
+  --retries 3 \
+  --verbose
 ```
 
 
