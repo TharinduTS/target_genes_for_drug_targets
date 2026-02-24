@@ -402,7 +402,13 @@ python chembl_target_scraper.py \
   --retries 3 \
   --verbose
 ```
+# Select columns
 
+Then I selected only the needed columns for claity
+
+```bash
+less drug_targets_with_genes.tsv | cut -f 1,2,3,4,5,11,12,13,21 > final_drug_info.tsv
+```
 
 
 
