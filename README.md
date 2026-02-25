@@ -2,7 +2,7 @@
 
 # 1) Mapping genes to drug targets
 
-# 1-I Introduction
+## 1-I Introduction
 
 I am trying to see whether there is a connection between the success of drugs (whether they made into testing phases 2,3,4 etc) and the cell specificity of their drug targets.
 
@@ -28,7 +28,7 @@ Because I had thousands of targets, I wanted to automate it and wrote the script
 
 This automatically adds genes affected by each gene in front of each gene seperated by commas.
 
-# 1-II Script
+## 1-II Script
 
 chembl_target_scraper.py
 
@@ -339,7 +339,7 @@ if __name__ == "__main__":
     main()
 ```
 
-# 1-III CLI help
+## 1-III CLI help
 
 ```txt
 
@@ -386,7 +386,7 @@ EXAMPLE:
       --refresh \
       --verbose
 ```
-# 1-IV Run command
+## 1-IV Run command
 
 I ran it like following.
 
@@ -404,7 +404,7 @@ python chembl_target_scraper.py \
   --retries 3 \
   --verbose
 ```
-# 1-V Select columns
+## 1-V Select columns
 
 Then I selected only the needed columns for claity
 
