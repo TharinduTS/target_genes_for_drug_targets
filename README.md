@@ -2024,6 +2024,41 @@ python extract_extreme_enrichment.py \
   --html-unescape \
   --value-round 6
 ```
+# 4) Making interactive plots
 
-
+python universal_plot_maker_plus.py \
+  --file chembl_with_enrichment_scored.tsv \
+  --out chembl_with_enrichment_scored.html \
+  --plot-type bar \
+  --x-choices "Parent Molecule ChEMBL ID | Parent Molecule Name | Target ChEMBL ID | Target Name" \
+  --y-choices "Penalized_enrichment_value" \
+  --default-x "Target Name" \
+  --default-y "Penalized_enrichment_value" \
+  --color-col "Max Phase" \
+  --color-choices "Max Phase|Parent Molecule Name|Parent Molecule Type|First Approval|Target Name|Action Type|Warning Type|Warning Class" \
+  --filter-cols "Max Phase|Parent Molecule Name|Parent Molecule Type|First Approval|Target Name|Action Type|Warning Type|Warning Class" \
+  --search-cols "Max Phase|Parent Molecule Name|Parent Molecule Type|First Approval|Target Name|Action Type|Warning Type|Warning Class" \
+  --details "Parent Molecule ChEMBL ID|Parent Molecule Name|Parent Molecule Type|Max Phase|First Approval|Target ChEMBL ID|Target Name|Action Type|ChEMBL_HGNC|Warning Type|Warning Class|Description|Country|First Withdrawn Year|EFO ID|EFO Term|Cell_type_with_max_enrichment|Penalized_enrichment_value" \
+  --title "Drug targets V1" \
+  --dup-policy overlay \
+  --sort-primary "Max Phase" \
+  --sort-primary-order desc \
+  --sort-secondary "Target Name" \
+  --sort-secondary-order asc \
+  --initial-zoom 100 \
+  --self-contained \
+  --lang en \
+  --pt-enable \
+  --pt-col "ChEMBL_HGNC_enrichment" \
+  --pt-title "Enrichment for cell types" \
+  --pt-x-label "cell type" \
+  --pt-y-label "log2 Enrichment Penalized" \
+  --pt-color "#2a9d8f" \
+  --pt-height 360 \
+  --pt-width auto \
+  --pt-rotate -35 \
+  --pt-container-id "present-tissues-plot" \
+  --pt-enable --pt-mode flow \
+  --pt-anchor "#rowDetails" --pt-position after \
+  --pt-offset-x -300 --pt-offset-y -10
 
