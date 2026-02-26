@@ -1367,4 +1367,663 @@ python fill_empty_values.py \
   --fill "EFO ID=NA" \
   --fill "EFO Term=No NA"
 ```
-# 3) Adding enrichment data
+# 3) Adding enrichment data - Cell type Enrichment
+
+## 3-I Introduction
+
+Then I wanted to add enrichment data here 
+
+I am doing it with 'gene_enrichment_join.py'
+
+## 3-II Script 
+
+gene_enrichment_join.py
+```py
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Join gene lists from Table 1 with per-gene metrics from Table 2 and emit an
+enriched list like: GENE|<key_combo>=<value>; GENE2|<key_combo>=<value>; ...
+
+Usage (example):
+    python gene_enrichment_join.py \
+        --table1 chembl_table1.tsv \
+        --table2 enrichment_table2.tsv \
+        --output chembl_with_enrichment.tsv \
+        --t1-col ChEMBL_HGNC \
+        --t1-sep "," \
+        --t2-gene-col "Gene name" \
+        --t2-key-col "Cell type" \
+        --t2-value-col "log2_enrichment_penalized" \
+        --gene-key-sep "|" \
+        --pair-sep "=" \
+        --item-sep "; " \
+        --newcol-name ChEMBL_HGNC_enrichment
+
+Notes:
+- If --t2-gene-col is omitted, the script tries to auto-detect from common names:
+  ["Gene name", "Gene", "gene", "HGNC symbol", "HGNC", "symbol"]
+- Add multiple --t2-key-col flags if you want to combine several keys:
+  e.g., --t2-key-col "Cell type" --t2-key-col "Cell type group"
+"""
+
+import argparse
+import logging
+import sys
+from typing import List, Dict, Tuple, Optional
+
+import pandas as pd
+
+
+def detect_t2_gene_col(df2: pd.DataFrame, user_choice: Optional[str]) -> str:
+    if user_choice and user_choice in df2.columns:
+        return user_choice
+    candidates = ["Gene name", "Gene", "gene", "HGNC symbol", "HGNC", "symbol"]
+    for c in candidates:
+        if c in df2.columns:
+            logging.info(f"Auto-detected Table 2 gene column: {c}")
+            return c
+    raise ValueError(
+        "Could not detect the gene column in Table 2. "
+        "Please provide --t2-gene-col explicitly."
+    )
+
+
+def build_gene_index(
+    df2: pd.DataFrame,
+    gene_col: str,
+    key_cols: List[str],
+    value_col: str,
+    case_sensitive: bool,
+    key_join_sep: str,
+    dedupe: bool,
+) -> Dict[str, List[Tuple[str, str]]]:
+    """
+    Returns a dict:
+        gene_norm -> list of (key_combo_str, value_str)
+    """
+    for c in [gene_col, value_col] + key_cols:
+        if c not in df2.columns:
+            raise KeyError(f"Column '{c}' not found in Table 2.")
+
+    # Prepare normalized gene column
+    gene_series = df2[gene_col].astype(str)
+    if not case_sensitive:
+        gene_series = gene_series.str.upper()
+
+    # Build key combo
+    key_combo = df2[key_cols].astype(str).apply(
+        lambda r: key_join_sep.join(r.tolist()), axis=1
+    )
+
+    # Format value as string (preserve as-is)
+    value_series = df2[value_col].apply(lambda x: "" if pd.isna(x) else str(x))
+
+    tmp = pd.DataFrame({
+        "_gene_norm": gene_series,
+        "_key": key_combo,
+        "_val": value_series
+    })
+
+    gene_map: Dict[str, List[Tuple[str, str]]] = {}
+
+    if dedupe:
+        # Drop exact duplicates for (gene, key, value)
+        tmp = tmp.drop_duplicates(subset=["_gene_norm", "_key", "_val"])
+
+    for _, row in tmp.iterrows():
+        g = row["_gene_norm"]
+        k = row["_key"]
+        v = row["_val"]
+        gene_map.setdefault(g, []).append((k, v))
+    return gene_map
+
+
+def parse_gene_list(
+    cell_value: object,
+    sep: str,
+    null_tokens: List[str],
+    case_sensitive: bool
+) -> List[Tuple[str, str]]:
+    """
+    Returns list of tuples: (gene_original_token, gene_norm_for_lookup)
+    """
+    if pd.isna(cell_value):
+        return []
+    text = str(cell_value)
+    if text.strip() == "":
+        return []
+    parts = [p.strip() for p in text.split(sep)]
+    out = []
+    null_set = {t.strip() for t in null_tokens}
+    for token in parts:
+        if token == "" or token in null_set:
+            continue
+        gene_norm = token if case_sensitive else token.upper()
+        out.append((token, gene_norm))
+    return out
+
+
+def enrich_row(
+    gene_tokens: List[Tuple[str, str]],
+    gene_map: Dict[str, List[Tuple[str, str]]],
+    gene_key_sep: str,
+    pair_sep: str,
+    item_sep: str,
+    keep_empty: bool,
+) -> str:
+    """
+    Build the enriched string for a single Table 1 row:
+        GENE{gene_key_sep}<key_combo>{pair_sep}<value>{item_sep}...
+    """
+    items: List[str] = []
+    for gene_original, gene_norm in gene_tokens:
+        hits = gene_map.get(gene_norm, [])
+        if not hits:
+            if keep_empty:
+                # Keep the gene token without any value (makes presence explicit)
+                items.append(gene_original)
+            continue
+        for key_combo, val in hits:
+            items.append(f"{gene_original}{gene_key_sep}{key_combo}{pair_sep}{val}")
+    return item_sep.join(items)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Expand genes in Table 1 by joining to Table 2 and attaching values."
+    )
+    parser.add_argument("--table1", required=True, help="Path to Table 1 (TSV).")
+    parser.add_argument("--table2", required=True, help="Path to Table 2 (TSV).")
+    parser.add_argument("--output", required=True, help="Output TSV file path.")
+
+    parser.add_argument("--t1-col", default="ChEMBL_HGNC",
+                        help="Column in Table 1 containing the gene list.")
+    parser.add_argument("--t1-sep", default=",",
+                        help="Separator used in the Table 1 gene list.")
+    parser.add_argument("--t1-null-values", default="NA,N/A,No NA",
+                        help="Comma-separated placeholders to ignore in Table 1 gene list.")
+
+    parser.add_argument("--t2-gene-col", default=None,
+                        help="Gene column in Table 2. Auto-detected if omitted.")
+    parser.add_argument("--t2-key-col", action="append", required=True,
+                        help="Repeat for each key column in Table 2 (e.g., 'Cell type').")
+    parser.add_argument("--t2-value-col", required=True,
+                        help="Value column from Table 2 to attach (e.g., 'log2_enrichment_penalized').")
+
+    parser.add_argument("--gene-key-sep", default="|",
+                        help="Separator between gene and key combo in output.")
+    parser.add_argument("--key-join-sep", default="::",
+                        help="Separator joining multiple Table 2 key columns.")
+    parser.add_argument("--pair-sep", default="=",
+                        help="Separator between (gene+key) and the value.")
+    parser.add_argument("--item-sep", default="; ",
+                        help="Separator used between multiple items in the output cell.")
+
+    parser.add_argument("--overwrite", action="store_true",
+                        help="Overwrite the Table 1 gene column with enriched text.")
+    parser.add_argument("--newcol-name", default=None,
+                        help="Name of the new column (if not overwriting). Defaults to <t1-col>_enrichment.")
+
+    parser.add_argument("--case-sensitive", action="store_true",
+                        help="Use case-sensitive gene matching (default: case-insensitive).")
+    parser.add_argument("--keep-empty", action="store_true",
+                        help="If a gene has no matches, keep the gene token (without value).")
+    parser.add_argument("--no-dedupe", dest="dedupe", action="store_false",
+                        help="Do not deduplicate identical (gene,key,value) entries.")
+    parser.set_defaults(dedupe=True)
+
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s: %(message)s", stream=sys.stderr
+    )
+
+    # Load input
+    try:
+        df1 = pd.read_csv(args.table1, sep="\t", dtype=str, keep_default_na=False)
+        df2 = pd.read_csv(args.table2, sep="\t", dtype=str, keep_default_na=False)
+    except Exception as e:
+        logging.error(f"Failed to read inputs: {e}")
+        sys.exit(1)
+
+    if args.t1_col not in df1.columns:
+        logging.error(f"Column '{args.t1_col}' not found in Table 1.")
+        sys.exit(1)
+
+    try:
+        t2_gene_col = detect_t2_gene_col(df2, args.t2_gene_col)
+    except Exception as e:
+        logging.error(str(e))
+        sys.exit(1)
+
+    # Build index from Table 2
+    try:
+        gene_map = build_gene_index(
+            df2=df2,
+            gene_col=t2_gene_col,
+            key_cols=args.t2_key_col,
+            value_col=args.t2_value_col,
+            case_sensitive=args.case_sensitive,
+            key_join_sep=args.key_join_sep,
+            dedupe=args.dedupe,
+        )
+    except Exception as e:
+        logging.error(f"Failed to build gene index: {e}")
+        sys.exit(1)
+
+    # Prepare null tokens for Table 1 gene list
+    null_tokens = [t.strip() for t in args.t1_null_values.split(",") if t.strip()]
+
+    # Compute enriched column
+    enriched_col_name = (
+        args.t1_col if args.overwrite else (args.newcol_name or f"{args.t1_col}_enrichment")
+    )
+
+    def process_cell(cell):
+        gene_tokens = parse_gene_list(
+            cell_value=cell,
+            sep=args.t1_sep,
+            null_tokens=null_tokens,
+            case_sensitive=args.case_sensitive,
+        )
+        return enrich_row(
+            gene_tokens=gene_tokens,
+            gene_map=gene_map,
+            gene_key_sep=args.gene_key_sep,
+            pair_sep=args.pair_sep,
+            item_sep=args.item_sep,
+            keep_empty=args.keep_empty,
+        )
+
+    try:
+        df1[enriched_col_name] = df1[args.t1_col].apply(process_cell)
+    except Exception as e:
+        logging.error(f"Failed while enriching Table 1: {e}")
+        sys.exit(1)
+
+    # If overwrite, no special action needed since we wrote into args.t1_col
+    # If not overwrite, keep both columns.
+
+    try:
+        df1.to_csv(args.output, sep="\t", index=False)
+        logging.info(f"Wrote output to: {args.output}")
+    except Exception as e:
+        logging.error(f"Failed to write output: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+```
+## 3-III CLI help
+
+```txt
+Gene Enrichment Join — Command Line Help
+=======================================
+
+This script expands gene lists in a Table 1 TSV file by matching each gene
+against Table 2 and attaching per-gene values such as enrichment scores,
+combined with one or more key columns (e.g., cell type).
+
+Basic Usage
+-----------
+    python gene_enrichment_join.py \
+        --table1 <table1.tsv> \
+        --table2 <table2.tsv> \
+        --output <output.tsv> \
+        --t1-col "ChEMBL_HGNC" \
+        --t2-gene-col "Gene name" \
+        --t2-key-col "Cell type" \
+        --t2-value-col "log2_enrichment_penalized"
+
+Required Arguments
+------------------
+--table1 PATH              Input Table 1 (TSV format)
+--table2 PATH              Input Table 2 (TSV format)
+--output PATH              Output TSV file path
+--t2-key-col COL           Key column(s) from Table 2 (repeatable)
+--t2-value-col COL         Value column from Table 2 to attach
+
+Optional Arguments
+------------------
+--t1-col COL               Gene list column in Table 1 (default: ChEMBL_HGNC)
+--t1-sep SEP               Separator for genes in Table 1 (default: ",")
+--t1-null-values LIST      Comma-separated tokens to ignore (default: "NA,N/A,No NA")
+
+--t2-gene-col COL          Gene column in Table 2 (auto-detected if omitted)
+
+--gene-key-sep SEP         Separator between gene and key combo (default: "|")
+--key-join-sep SEP         Separator joining multiple key columns (default: "::")
+--pair-sep SEP             Separator between <gene|key> and value (default: "=")
+--item-sep SEP             Separator between enriched items (default: "; ")
+
+--overwrite                Replace original gene list column in Table 1
+--newcol-name NAME         Create a new output column (default: <t1-col>_enrichment)
+
+--case-sensitive           Match genes case-sensitively (default: off)
+--keep-empty               Include genes with no matches as empty entries
+--no-dedupe                Do not deduplicate repeated (gene, key, value) entries
+
+Description
+-----------
+For each gene listed in Table 1, the script finds all matching rows in Table 2,
+combines the gene with one or more key columns, attaches the chosen value
+column, and outputs a joined string such as:
+
+    GENE|CellType=Value; GENE|CellType2=Value2
+
+The result is written either to a new column or overwrites the existing gene
+column as specified.
+```
+
+## 3-IV Run command
+
+```bash
+python gene_enrichment_join.py \
+  --table1 drug_info_with_genes_and_warnings_fully_cleaned.tsv \
+  --table2 Final_data_with_tissue_expression_data.tsv \
+  --output chembl_with_enrichment.tsv \
+  --t1-col "ChEMBL_HGNC" \
+  --t1-sep "," \
+  --t2-gene-col "Gene name" \
+  --t2-key-col "Cell type" \
+  --t2-value-col "log2_enrichment_penalized" \
+  --gene-key-sep "-" \
+  --pair-sep ":" \
+  --item-sep " & " \
+  --newcol-name "ChEMBL_HGNC_enrichment"
+```
+## 3-V selecting maximum enrichment
+
+Because I need a value to prioritize when I plot, I am selecting the maximum enrichment value for each row.
+
+### Script
+
+extract_extreme_enrichment.py
+```py
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Extract the max/min/mean enrichment from a "gene-key:value" list column.
+
+Example (your case):
+  python extract_extreme_enrichment.py \
+    --input chembl_with_enrichment.tsv \
+    --output chembl_with_enrichment_scored.tsv \
+    --source-col "ChEMBL_HGNC_enrichment" \
+    --item-sep " & " \
+    --gene-key-sep "-" \
+    --pair-sep ":" \
+    --agg max \
+    --label-col "Cell_type_with_max_enrichment" \
+    --value-col "Penalized_enrichment_value" \
+    --html-unescape
+"""
+
+import argparse
+import html
+import math
+import sys
+from typing import List, Tuple, Optional
+
+import pandas as pd
+
+
+def parse_items(
+    text: str,
+    item_sep: str,
+    pair_sep: str,
+    html_unescape: bool,
+) -> List[Tuple[str, float]]:
+    """
+    Parse a cell like:
+        "CHRNA1-myosatellite cells:6.18 & CHRNA1-myonuclei:5.44"
+    into list of (label_str, value_float).
+
+    - item_sep splits items
+    - pair_sep splits label vs value (split from the RIGHT to be robust)
+    """
+    if text is None or str(text).strip() == "":
+        return []
+
+    s = str(text)
+    if html_unescape:
+        s = html.unescape(s)
+
+    items = []
+    for raw in s.split(item_sep):
+        token = raw.strip()
+        if not token:
+            continue
+        if pair_sep not in token:
+            # Skip malformed item
+            continue
+        left, val = token.rsplit(pair_sep, 1)
+        label = left.strip()
+        try:
+            v = float(val.strip())
+            if math.isfinite(v):
+                items.append((label, v))
+        except Exception:
+            # Skip if value can't be parsed
+            continue
+    return items
+
+
+def aggregate_items(
+    items: List[Tuple[str, float]],
+    agg: str,
+    mean_label_policy: str,
+    joiner_for_join_policy: str = "; "
+) -> Tuple[str, Optional[float]]:
+    """
+    Returns (label_for_output, value_for_output).
+
+    - For 'max': label is the label with the maximum value.
+    - For 'min': label is the label with the minimum value.
+    - For 'mean':
+        value is the mean of values; label depends on mean_label_policy:
+          * 'empty' -> ""
+          * 'max'   -> label of max value
+          * 'min'   -> label of min value
+          * 'join'  -> join all labels (may be long)
+    """
+    if not items:
+        return ("", None)
+
+    if agg == "max":
+        label, v = max(items, key=lambda x: x[1])
+        return (label, v)
+
+    if agg == "min":
+        label, v = min(items, key=lambda x: x[1])
+        return (label, v)
+
+    if agg == "mean":
+        values = [v for _, v in items]
+        mean_val = sum(values) / len(values) if values else None
+        if mean_label_policy == "empty" or mean_val is None:
+            return ("", mean_val)
+        elif mean_label_policy == "max":
+            label, _ = max(items, key=lambda x: x[1])
+            return (label, mean_val)
+        elif mean_label_policy == "min":
+            label, _ = min(items, key=lambda x: x[1])
+            return (label, mean_val)
+        elif mean_label_policy == "join":
+            labels = [lbl for lbl, _ in items]
+            return (joiner_for_join_policy.join(labels), mean_val)
+        else:
+            # Fallback
+            return ("", mean_val)
+
+    # Unknown agg -> default to max
+    label, v = max(items, key=lambda x: x[1])
+    return (label, v)
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Extract max/min/mean from a 'label:value' list column and write two new columns."
+    )
+    ap.add_argument("--input", required=True, help="Input TSV file path.")
+    ap.add_argument("--output", required=True, help="Output TSV file path.")
+    ap.add_argument("--source-col", required=True,
+                    help="Column containing items like 'GENE-CellType:Value' separated by a delimiter.")
+    ap.add_argument("--item-sep", default="; ",
+                    help="Separator between items (default: '; ')")
+    ap.add_argument("--gene-key-sep", default="|",
+                    help="(Informational) separator used between gene and key; not required for parsing.")
+    ap.add_argument("--pair-sep", default="=",
+                    help="Separator between (gene+key) and value (default: '=')")
+    ap.add_argument("--agg", choices=["max", "min", "mean"], default="max",
+                    help="Aggregation to compute over values (default: max).")
+    ap.add_argument("--label-col", default="Cell_type_with_max_enrichment",
+                    help="Output column name for the label (default: 'Cell_type_with_max_enrichment').")
+    ap.add_argument("--value-col", default="Penalized_enrichment_value",
+                    help="Output column name for the numeric value (default: 'Penalized_enrichment_value').")
+    ap.add_argument("--value-round", type=int, default=None,
+                    help="Round numeric value to N decimals (optional).")
+    ap.add_argument("--html-unescape", action="store_true",
+                    help="HTML-unescape the source text (e.g., '&amp;' -> '&').")
+    ap.add_argument("--mean-label-policy", choices=["empty", "max", "min", "join"],
+                    default="max",
+                    help="Label policy when --agg=mean (default: max).")
+    ap.add_argument("--joiner-for-mean-label", default="; ",
+                    help="Joiner used when --mean-label-policy=join (default: '; ')")
+
+    args = ap.parse_args()
+
+    # Read
+    try:
+        df = pd.read_csv(args.input, sep="\t", dtype=str, keep_default_na=False)
+    except Exception as e:
+        sys.stderr.write(f"ERROR reading input: {e}\n")
+        sys.exit(1)
+
+    if args.source_col not in df.columns:
+        sys.stderr.write(f"ERROR: source column '{args.source_col}' not found.\n")
+        sys.exit(1)
+
+    # Compute per-row extraction
+    labels_out = []
+    values_out = []
+
+    for _, row in df.iterrows():
+        items = parse_items(
+            text=row[args.source_col],
+            item_sep=args.item_sep,
+            pair_sep=args.pair_sep,
+            html_unescape=args.html_unescape,
+        )
+        label, val = aggregate_items(
+            items=items,
+            agg=args.agg,
+            mean_label_policy=args.mean_label_policy,
+            joiner_for_join_policy=args.joiner_for_mean_label,
+        )
+        if val is not None and args.value_round is not None:
+            try:
+                val = round(float(val), args.value_round)
+            except Exception:
+                pass
+        labels_out.append(label)
+        values_out.append("" if val is None else val)
+
+    df[args.label_col] = labels_out
+    df[args.value_col] = values_out
+
+    # Write
+    try:
+        df.to_csv(args.output, sep="\t", index=False)
+    except Exception as e:
+        sys.stderr.write(f"ERROR writing output: {e}\n")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+### CLI help 
+
+```txt
+Extract Extreme Enrichment — Command Line Help
+==============================================
+
+This script processes a column containing items of the form:
+    GENE-CellType:Value & GENE-OtherCellType:Value2 & ...
+and extracts the maximum, minimum, or mean enrichment value per row.
+Two new columns are added to the output table: one for the selected label
+and one for the numeric value.
+
+Basic Usage
+-----------
+    python extract_extreme_enrichment.py \
+        --input chembl_with_enrichment.tsv \
+        --output chembl_with_enrichment_scored.tsv \
+        --source-col "ChEMBL_HGNC_enrichment" \
+        --item-sep " & " \
+        --gene-key-sep "-" \
+        --pair-sep ":" \
+        --agg max \
+        --label-col "Cell_type_with_max_enrichment" \
+        --value-col "Penalized_enrichment_value" \
+        --html-unescape
+
+Required Arguments
+------------------
+--input PATH                Input TSV file
+--output PATH               Output TSV file
+--source-col COL            Column containing "label:value" items
+--t2? no but source-col? yes
+
+Optional Arguments
+------------------
+--item-sep SEP              Separator between items (default: "; ")
+--pair-sep SEP              Separator between label and value (default: "=")
+--gene-key-sep SEP          Informational only; not required for parsing
+--agg {max,min,mean}        Aggregation function (default: max)
+--label-col NAME            Output column name for the selected label
+--value-col NAME            Output column name for the numeric value
+--value-round N             Round numeric value to N decimals
+--html-unescape             Convert HTML escapes (e.g., "&amp;" → "&")
+
+Mean-Aggregation Options
+------------------------
+--mean-label-policy {empty,max,min,join}
+    Label choice when --agg=mean (default: max)
+--joiner-for-mean-label STR
+    Separator when joining labels under policy "join" (default: "; ")
+
+Description
+-----------
+For each row, the script parses entries like:
+    GENE-CellType:6.18 & GENE-OtherType:5.44
+and returns the label/value pair with the max, min, or mean enrichment.
+Output is written to two new columns in the TSV file.
+```
+### Run command
+
+```bash
+python extract_extreme_enrichment.py \
+  --input chembl_with_enrichment.tsv \
+  --output chembl_with_enrichment_scored.tsv \
+  --source-col "ChEMBL_HGNC_enrichment" \
+  --item-sep " & " \
+  --gene-key-sep "-" \
+  --pair-sep ":" \
+  --agg max \
+  --label-col "Cell_type_with_max_enrichment" \
+  --value-col "Penalized_enrichment_value" \
+  --html-unescape \
+  --value-round 6
+```
+
+
+
