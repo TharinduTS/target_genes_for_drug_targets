@@ -2162,7 +2162,7 @@ python universal_plot_maker_plus.py \
   --plot-type bar \
   --x-choices "Parent Molecule ChEMBL ID | Parent Molecule Name | Target ChEMBL ID | Target Name" \
   --y-choices "Penalized_enrichment_value" \
-  --default-x "Target Name" \
+  --default-x "Target ChEMBL ID" \
   --default-y "Penalized_enrichment_value" \
   --color-col "Max Phase" \
   --color-choices "Max Phase|Parent Molecule Name|Parent Molecule Type|First Approval|Target Name|Action Type|Warning Type|Warning Class" \
@@ -2171,7 +2171,7 @@ python universal_plot_maker_plus.py \
   --details "Parent Molecule ChEMBL ID|Parent Molecule Name|Parent Molecule Type|Max Phase|First Approval|Target ChEMBL ID|Target Name|Action Type|ChEMBL_HGNC|Warning Type|Warning Class|Description|Country|First Withdrawn Year|EFO ID|EFO Term|Cell_type_with_max_enrichment|Penalized_enrichment_value" \
   --title "Drug targets V1" \
   --dup-policy overlay \
-  --sort-primary "Max Phase" \
+  --sort-primary "Penalized_enrichment_value" \
   --sort-primary-order desc \
   --sort-secondary "Target Name" \
   --sort-secondary-order asc \
