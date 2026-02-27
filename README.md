@@ -1457,7 +1457,13 @@ extract_extreme_enrichment.py
 # -*- coding: utf-8 -*-
 
 """
-Extract the max/min/mean enrichment from a "gene-key:value" list column.
+Extract the max/min/mean enrichment from a "<value><pair-sep><label>" list column.
+
+NEW FORMAT (value first):
+    "6.18:CHRNA1-myosatellite cells & 5.44:CHRNA1-myonuclei & ..."
+
+- item_sep splits items (e.g., " & ")
+- pair_sep splits value from label (from the LEFT now, since value comes first)
 
 Example (your case):
   python extract_extreme_enrichment.py \
@@ -1490,11 +1496,11 @@ def parse_items(
 ) -> List[Tuple[str, float]]:
     """
     Parse a cell like:
-        "CHRNA1-myosatellite cells:6.18 & CHRNA1-myonuclei:5.44"
+        "6.18:CHRNA1-myosatellite cells & 5.44:CHRNA1-myonuclei"
     into list of (label_str, value_float).
 
-    - item_sep splits items
-    - pair_sep splits label vs value (split from the RIGHT to be robust)
+    NEW ORDER: value first, then label.
+    We split from the LEFT (split(pair_sep, 1)) to capture the value correctly.
     """
     if text is None or str(text).strip() == "":
         return []
@@ -1511,10 +1517,14 @@ def parse_items(
         if pair_sep not in token:
             # Skip malformed item
             continue
-        left, val = token.rsplit(pair_sep, 1)
-        label = left.strip()
+
+        # NEW: value first, then label
+        val_str, label = token.split(pair_sep, 1)
+        val_str = val_str.strip()
+        label = label.strip()
+
         try:
-            v = float(val.strip())
+            v = float(val_str)
             if math.isfinite(v):
                 items.append((label, v))
         except Exception:
@@ -1567,7 +1577,6 @@ def aggregate_items(
             labels = [lbl for lbl, _ in items]
             return (joiner_for_join_policy.join(labels), mean_val)
         else:
-            # Fallback
             return ("", mean_val)
 
     # Unknown agg -> default to max
@@ -1577,22 +1586,22 @@ def aggregate_items(
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Extract max/min/mean from a 'label:value' list column and write two new columns."
+        description="Extract max/min/mean from a '<value><pair-sep><label>' list column and write two new columns."
     )
     ap.add_argument("--input", required=True, help="Input TSV file path.")
     ap.add_argument("--output", required=True, help="Output TSV file path.")
     ap.add_argument("--source-col", required=True,
-                    help="Column containing items like 'GENE-CellType:Value' separated by a delimiter.")
+                    help="Column containing items like 'Value:GENE-CellType' separated by a delimiter.")
     ap.add_argument("--item-sep", default="; ",
                     help="Separator between items (default: '; ')")
     ap.add_argument("--gene-key-sep", default="|",
                     help="(Informational) separator used between gene and key; not required for parsing.")
     ap.add_argument("--pair-sep", default="=",
-                    help="Separator between (gene+key) and value (default: '=')")
+                    help="Separator between value and label (default: '=')")
     ap.add_argument("--agg", choices=["max", "min", "mean"], default="max",
                     help="Aggregation to compute over values (default: max).")
     ap.add_argument("--label-col", default="Cell_type_with_max_enrichment",
-                    help="Output column name for the label (default: 'Cell_type_with_max_enrichment').")
+                    help="Output column name for the selected label (default: 'Cell_type_with_max_enrichment').")
     ap.add_argument("--value-col", default="Penalized_enrichment_value",
                     help="Output column name for the numeric value (default: 'Penalized_enrichment_value').")
     ap.add_argument("--value-round", type=int, default=None,
@@ -1626,7 +1635,7 @@ def main():
         items = parse_items(
             text=row[args.source_col],
             item_sep=args.item_sep,
-            pair_sep=args.pair_sep,
+            pair_sep=args.pair_seP if hasattr(args, "pair_seP") else args.pair_sep,  # guard just in case
             html_unescape=args.html_unescape,
         )
         label, val = aggregate_items(
@@ -1656,6 +1665,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 ```
 
 ### CLI help 
