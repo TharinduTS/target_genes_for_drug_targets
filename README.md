@@ -2136,9 +2136,9 @@ python fill_empty_values.py \
   --fill "EFO Term=none" \
   --fill "ChEMBL_HGNC_enrichment=none" \
   --fill "Cell_type_with_max_enrichment=none" \
-  --fill "Max Phase=null" \
-  --fill "First Approval=null" \
-  --fill "Penalized_enrichment_value=null"
+  --fill "Max Phase=0" \ 
+  --fill "First Approval=0" \
+  --fill "Penalized_enrichment_value=0"
 ```
 
 # 5) Making interactive plots
