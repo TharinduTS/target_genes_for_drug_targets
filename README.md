@@ -1743,7 +1743,6 @@ Even from the filtered data, only some drugs have warnings. Therefore I am filli
 
 fill_empty_values.py
 ```
-
 #!/usr/bin/env python3
 """
 fill_empty_values.py — Fill empty/NaN cells per-column with provided defaults.
@@ -2118,23 +2117,6 @@ Examples:
 #### Run Command
 
 ```bash
-
-python fill_empty_values.py \
-  -i drug_info_with_genes_and_warnings_empties_dropped.tsv \
-  -o drug_info_with_genes_and_warnings_fully_cleaned.tsv \
-  --fill "Warning Type=No Warnings found" \
-  --fill "Warning Class=NA" \
-  --fill "Description=NA" \
-  --fill "Country=NA" \
-  --fill "First Withdrawn Year=NA" \
-  --fill "EFO ID=NA" \
-  --fill "EFO Term=No NA"
-```
-
-
-
-python check_missing.py chembl_with_enrichment_scored.tsv --columns "Parent Molecule ChEMBL ID" "Parent Molecule Name" "Parent Molecule Type" "Max Phase" "First Approval" "Target ChEMBL ID" "Target Name" "Action Type" "ChEMBL_HGNC" "Warning Type" "Warning Class" "Description" "Country" "First Withdrawn Year" "EFO ID" "EFO Term" "ChEMBL_HGNC_enrichment" "Cell_type_with_max_enrichment" "Penalized_enrichment_value"
-
 python fill_empty_values.py \
   -i chembl_with_enrichment_scored.tsv \
   -o chembl_with_enrichment_scored_empties_filled.tsv \
@@ -2154,12 +2136,12 @@ python fill_empty_values.py \
   --fill "EFO Term=none" \
   --fill "ChEMBL_HGNC_enrichment=none" \
   --fill "Cell_type_with_max_enrichment=none" \
-  --fill "Max Phase=0" \
-  --fill "First Approval=0" \
-  --fill "Penalized_enrichment_value=0.0"
-  
+  --fill "Max Phase=none" \
+  --fill "First Approval=none" \
+  --fill "Penalized_enrichment_value=none"
+```
 
-# 4) Making interactive plots
+# 5) Making interactive plots
 
 ## Run command
 
