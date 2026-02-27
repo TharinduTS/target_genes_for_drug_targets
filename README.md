@@ -2128,27 +2128,27 @@ Examples:
 
 ```bash
 python fill_empty_values.py \
-  -i chembl_with_enrichment_scored.tsv \
-  -o chembl_with_enrichment_scored_empties_filled.tsv \
-  --fill "Parent Molecule ChEMBL ID=none" \
-  --fill "Parent Molecule Name=No_name" \
-  --fill "Parent Molecule Type=none" \
-  --fill "Target ChEMBL ID=none" \
-  --fill "Target Name=none" \
-  --fill "Action Type=none" \
-  --fill "ChEMBL_HGNC=none" \
-  --fill "Warning Type=No Warnings found" \
-  --fill "Warning Class=none" \
-  --fill "Description=none" \
-  --fill "Country=none" \
-  --fill "First Withdrawn Year=none" \
-  --fill "EFO ID=none" \
-  --fill "EFO Term=none" \
-  --fill "ChEMBL_HGNC_enrichment=none" \
-  --fill "Cell_type_with_max_enrichment=none" \
-  --fill "Max Phase=none" \ 
-  --fill "First Approval=none" \
-  --fill "Penalized_enrichment_value=none"
+    -i chembl_with_enrichment_scored.tsv \
+    -o chembl_with_enrichment_scored_empties_filled.tsv \
+    --fill "Parent Molecule ChEMBL ID=none" \
+    --fill "Parent Molecule Name=No_name" \
+    --fill "Parent Molecule Type=none" \
+    --fill "Target ChEMBL ID=none" \
+    --fill "Target Name=none" \
+    --fill "Action Type=none" \
+    --fill "ChEMBL_HGNC=none" \
+    --fill "Warning Type=No Warnings found" \
+    --fill "Warning Class=none" \
+    --fill "Description=none" \
+    --fill "Country=none" \
+    --fill "First Withdrawn Year=none" \
+    --fill "EFO ID=none" \
+    --fill "EFO Term=none" \
+    --fill "ChEMBL_HGNC_enrichment=none" \
+    --fill "Cell_type_with_max_enrichment=none" \
+    --fill "Max Phase=none" \
+    --fill "First Approval=none" \
+    --fill "Penalized_enrichment_value=none"
 ```
 
 # 5) Making interactive plots
