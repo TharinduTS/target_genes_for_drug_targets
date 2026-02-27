@@ -1768,9 +1768,9 @@ Examples:
     --fill "EFO Term=none" \
     --fill "ChEMBL_HGNC_enrichment=none" \
     --fill "Cell_type_with_max_enrichment=none" \
-    --fill "Max Phase=0" \
-    --fill "First Approval=1" \
-    --fill "Penalized_enrichment_value=0.0"
+    --fill "Max Phase=none" \
+    --fill "First Approval=none" \
+    --fill "Penalized_enrichment_value=none"
 """
 
 import argparse
