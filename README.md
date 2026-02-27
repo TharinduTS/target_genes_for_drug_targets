@@ -1094,7 +1094,7 @@ gene_enrichment_join.py
 
 """
 Join gene lists from Table 1 with per-gene metrics from Table 2 and emit an
-enriched list like: GENE|<key_combo>=<value>; GENE2|<key_combo>=<value>; ...
+enriched list like: <value><pair-sep><gene><gene-key-sep><key_combo>{item-sep}...
 
 Usage (example):
     python gene_enrichment_join.py \
@@ -1107,8 +1107,8 @@ Usage (example):
         --t2-key-col "Cell type" \
         --t2-value-col "log2_enrichment_penalized" \
         --gene-key-sep "|" \
-        --pair-sep "=" \
-        --item-sep "; " \
+        --pair-sep ":" \
+        --item-sep " & " \
         --newcol-name ChEMBL_HGNC_enrichment
 
 Notes:
@@ -1224,8 +1224,8 @@ def enrich_row(
     keep_empty: bool,
 ) -> str:
     """
-    Build the enriched string for a single Table 1 row:
-        GENE{gene_key_sep}<key_combo>{pair_sep}<value>{item_sep}...
+    Build the enriched string for a single Table 1 row in the new order:
+        <value>{pair_sep}<gene>{gene_key_sep}<key_combo>{item_sep}...
     """
     items: List[str] = []
     for gene_original, gene_norm in gene_tokens:
@@ -1236,13 +1236,14 @@ def enrich_row(
                 items.append(gene_original)
             continue
         for key_combo, val in hits:
-            items.append(f"{gene_original}{gene_key_sep}{key_combo}{pair_sep}{val}")
+            # CHANGED ORDER: value first, then gene + key combo
+            items.append(f"{val}{pair_sep}{gene_original}{gene_key_sep}{key_combo}")
     return item_sep.join(items)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Expand genes in Table 1 by joining to Table 2 and attaching values."
+        description="Expand genes in Table 1 by joining to Table 2 and attaching values (value first)."
     )
     parser.add_argument("--table1", required=True, help="Path to Table 1 (TSV).")
     parser.add_argument("--table2", required=True, help="Path to Table 2 (TSV).")
@@ -1267,7 +1268,7 @@ def main():
     parser.add_argument("--key-join-sep", default="::",
                         help="Separator joining multiple Table 2 key columns.")
     parser.add_argument("--pair-sep", default="=",
-                        help="Separator between (gene+key) and the value.")
+                        help="Separator between value and (gene+key) in output.")
     parser.add_argument("--item-sep", default="; ",
                         help="Separator used between multiple items in the output cell.")
 
@@ -1353,9 +1354,7 @@ def main():
         logging.error(f"Failed while enriching Table 1: {e}")
         sys.exit(1)
 
-    # If overwrite, no special action needed since we wrote into args.t1_col
-    # If not overwrite, keep both columns.
-
+    # Write output
     try:
         df1.to_csv(args.output, sep="\t", index=False)
         logging.info(f"Wrote output to: {args.output}")
