@@ -2791,3 +2791,13 @@ python split_enrichment.py \
   --skip-invalid
 ```
 
+## 6-V Rename old max Penalized_enrichment_value column
+
+I am doing this as this can be confusing
+
+```
+sed 's/\bPenalized_enrichment_value\b/Max_penalized_enrichment_value/' drug_targets_and_cell_type_enrichment.tsv > name_fixed_drug_targets_and_cell_type_enrichment.tsv
+```
+
+
+
