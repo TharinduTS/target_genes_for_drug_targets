@@ -2195,8 +2195,599 @@ python universal_plot_maker_plus.py \
 
 # 6) Splitting dataset to see more details
 
-# 6-I Introduction
+## 6-I Introduction
 
 I only selected and compared the maximum enrichment values for each drug/ drug target so far. It could be udeful to see all the different enrichment values for target genes, mean, avg etc at once for each gene. Therefore I am splitting the column 'ChEMBL_HGNC_enrichment' to multiple rows here.
 
+## 6-II Script 
+
+split_enrichment.py
+
+```py
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Explode a 'packed' enrichment column into multiple rows and new columns (with robust CLI).
+
+Key features:
+  - Input/output paths
+  - Select 'packed' column to explode
+  - Row separator (e.g., '&'), inner separators (e.g., ':' and '-')
+  - New column names for the split parts (value, gene, cell type)
+  - Auto delimiter sniffing or user-provided (with normalization: "\\t", "\t", "tab", "comma", "pipe", etc.)
+  - Optional HTML entity unescaping (handles '&amp;' -> '&' in both the TEXT and the SEPARATORS)
+  - Option to drop original packed column
+  - Option to skip invalid segments
+  - End-of-run summary (input rows, segments, valid/invalid, skipped, output rows)
+
+Example usage (Bash/zsh):
+    python split_enrichment.py \
+      -i chembl_with_enrichment_scored_empties_filled.tsv \
+      -o drug_targets_and_cell_type_enrichment.tsv \
+      -c ChEMBL_HGNC_enrichment \
+      --row-sep "&amp;" \
+      --value-sep ":" \
+      --gene-sep "-" \
+      --new-cols enrichment_value Gene "Cell type" \
+      --in-delim "\t" \
+      --out-delim "\t" \
+      --html-unescape \
+      --drop-original-column \
+      --skip-invalid
+
+Note:
+  - With this patched version, passing "\t" as shown above now works (it is normalized to a real TAB).
+"""
+
+import argparse
+import csv
+import html
+import re
+import sys
+from typing import List, Optional, Tuple
+
+import pandas as pd
+
+
+# ----------------------------- Utilities -------------------------------------
+
+def sniff_delimiter(path: str, encoding: str, fallback: str = ",") -> str:
+    """Try to detect delimiter using csv.Sniffer; fallback to provided."""
+    try:
+        with open(path, "r", encoding=encoding, newline="") as f:
+            sample = f.read(65536)
+            if not sample:
+                return fallback
+            dialect = csv.Sniffer().sniff(sample, delimiters=[",", "\t", ";", "|"])
+            return dialect.delimiter or fallback
+    except Exception:
+        return fallback
+
+
+def normalize_delim(s: Optional[str]) -> Optional[str]:
+    """
+    Convert common textual tokens to single-character delimiters.
+
+    Accepts examples:
+      "\\t", "\t", "\\x09", "TAB", "tab"
+      "comma", ","
+      "semi", "semicolon", ";"
+      "pipe", "|"
+      "\\n", "\n"
+    Returns a 1-character string (or None if input None).
+    """
+    if s is None:
+        return None
+
+    if len(s) == 1:
+        return s  # already a single character
+
+    raw = s.strip()
+
+    # Named aliases (case-insensitive)
+    named = {
+        "tab": "\t",
+        "comma": ",",
+        "semi": ";",
+        "semicolon": ";",
+        "pipe": "|",
+        "bar": "|",
+        "newline": "\n",
+        "nl": "\n",
+    }
+    key = raw.lower()
+    if key in named:
+        return named[key]
+
+    # Try unicode escape decoding (handles "\t", "\x09", "\n", etc.)
+    try:
+        decoded = bytes(raw, "utf-8").decode("unicode_escape")
+        # If decoding results in exactly 1 character, accept it
+        if len(decoded) == 1:
+            return decoded
+    except Exception:
+        pass
+
+    # As a last resort, handle literal "\t" or "\\t"
+    if raw in (r"\t", "\\t"):
+        return "\t"
+    if raw in (r"\n", "\\n"):
+        return "\n"
+
+    # Could not normalize to 1-char
+    return s
+
+
+def normalize_token(token: str, html_unescape_opt: bool) -> str:
+    """
+    Normalize a separator token (row/value/gene separators):
+      - Apply unicode_escape decoding (so "\t", "\x26", etc. work)
+      - Optionally HTML-unescape (so "&amp;" becomes "&")
+    """
+    if token is None:
+        return token
+    out = token
+    try:
+        out = bytes(out, "utf-8").decode("unicode_escape")
+    except Exception:
+        pass
+    if html_unescape_opt:
+        out = html.unescape(out)
+    return out
+
+
+# ----------------------------- Core parsing -----------------------------------
+
+def parse_piece(
+    piece: str,
+    value_sep: str,
+    gene_sep: str,
+) -> Tuple[Optional[float], Optional[str], Optional[str], bool]:
+    """
+    Parse one piece like "6.18783:CHRNA1-myosatellite cells"
+    Returns (value, gene, cell_type, is_valid_segment).
+
+    Strict rules:
+      - Numeric value must be present (float-compatible)
+      - value_sep must be present once (first split used)
+      - gene_sep must be present once (first split used)
+    """
+    piece = piece.strip()
+    if not piece:
+        return (None, None, None, False)
+
+    if value_sep not in piece:
+        return (None, None, None, False)
+
+    value_str, rest = piece.split(value_sep, 1)
+    value_str = value_str.strip()
+    rest = rest.strip()
+    if not value_str or not rest:
+        return (None, None, None, False)
+
+    try:
+        value = float(value_str)
+    except Exception:
+        return (None, None, None, False)
+
+    if gene_sep not in rest:
+        return (None, None, None, False)
+
+    gene, cell = rest.split(gene_sep, 1)
+    gene = (gene or "").strip()
+    cell = (cell or "").strip()
+    if not gene or not cell:
+        return (None, None, None, False)
+
+    return (value, gene, cell, True)
+
+
+def explode_packed_column(
+    df: pd.DataFrame,
+    target_col: str,
+    row_sep: str,
+    value_sep: str,
+    gene_sep: str,
+    new_cols: List[str],
+    html_unescape_opt: bool,
+    skip_invalid: bool,
+):
+    """
+    For each row, split 'target_col' into multiple rows and add new columns.
+
+    Returns:
+      exploded_df (pd.DataFrame),
+      summary (dict)
+    """
+    if target_col not in df.columns:
+        raise KeyError(
+            f"Column '{target_col}' not found in input file. "
+            f"Available columns: {list(df.columns)}"
+        )
+
+    # Normalize separators (important if user passed "&amp;", "\t", etc.)
+    row_sep = normalize_token(row_sep, html_unescape_opt)
+    value_sep = normalize_token(value_sep, html_unescape_opt)
+    gene_sep = normalize_token(gene_sep, html_unescape_opt)
+
+    # Prepare regex for row splitting (allow surrounding whitespace)
+    row_pattern = r"\s*{}\s*".format(re.escape(row_sep))
+
+    # Metrics
+    input_rows = len(df)
+    rows_with_nonempty = 0
+    total_segments = 0
+    valid_segments = 0
+    invalid_segments = 0
+    rows_all_segments_invalid_or_empty = 0
+    segments_dropped_due_to_skip = 0
+
+    out_rows = []
+
+    for _, row in df.iterrows():
+        cell = row[target_col]
+        if pd.isna(cell) or str(cell).strip() == "":
+            rows_all_segments_invalid_or_empty += 1
+            if not skip_invalid:
+                base = row.to_dict()
+                base.update({new_cols[0]: None, new_cols[1]: None, new_cols[2]: None})
+                out_rows.append(base)
+            continue
+
+        rows_with_nonempty += 1
+        text = str(cell)
+        if html_unescape_opt:
+            text = html.unescape(text)
+
+        # Split pieces, trimming whitespace and removing empties
+        pieces = re.split(row_pattern, text)
+        pieces = [p for p in (x.strip() for x in pieces) if p != ""]
+
+        if not pieces:
+            rows_all_segments_invalid_or_empty += 1
+            if not skip_invalid:
+                base = row.to_dict()
+                base.update({new_cols[0]: None, new_cols[1]: None, new_cols[2]: None})
+                out_rows.append(base)
+            continue
+
+        per_row_valid = 0
+
+        for piece in pieces:
+            total_segments += 1
+            val, gene, celltype, is_valid = parse_piece(
+                piece=piece,
+                value_sep=value_sep,
+                gene_sep=gene_sep,
+            )
+            if is_valid:
+                valid_segments += 1
+                per_row_valid += 1
+                base = row.to_dict()
+                base.update({
+                    new_cols[0]: val,
+                    new_cols[1]: gene,
+                    new_cols[2]: celltype,
+                })
+                out_rows.append(base)
+            else:
+                invalid_segments += 1
+                if not skip_invalid:
+                    base = row.to_dict()
+                    base.update({
+                        new_cols[0]: None,
+                        new_cols[1]: None,
+                        new_cols[2]: None,
+                    })
+                    out_rows.append(base)
+                else:
+                    segments_dropped_due_to_skip += 1
+
+        if per_row_valid == 0:
+            rows_all_segments_invalid_or_empty += 1
+
+    # Build output DataFrame
+    columns = list(df.columns) + new_cols
+    exploded = pd.DataFrame(out_rows, columns=columns) if out_rows else pd.DataFrame(columns=columns)
+
+    summary = {
+        "input_rows": input_rows,
+        "rows_with_nonempty_target": rows_with_nonempty,
+        "total_segments_found": total_segments,
+        "valid_segments": valid_segments,
+        "invalid_segments": invalid_segments,
+        "segments_dropped_due_to_skip": segments_dropped_due_to_skip,
+        "rows_all_segments_invalid_or_empty": rows_all_segments_invalid_or_empty,
+        "output_rows": len(exploded),
+    }
+    return exploded, summary
+
+
+def format_summary(summary: dict, args, in_delim_norm: str, out_delim_norm: str) -> str:
+    lines = []
+    lines.append("=== Summary ===")
+    lines.append(f"Input rows:                         {summary['input_rows']:,}")
+    lines.append(f"Rows with non-empty target column:  {summary['rows_with_nonempty_target']:,}")
+    lines.append(f"Total segments found:               {summary['total_segments_found']:,}")
+    lines.append(f"  ├─ Valid segments:                {summary['valid_segments']:,}")
+    lines.append(f"  └─ Invalid segments:              {summary['invalid_segments']:,}")
+    if args.skip_invalid:
+        lines.append(f"Segments dropped (--skip-invalid):  {summary['segments_dropped_due_to_skip']:,}")
+    lines.append(f"Rows all invalid/empty:             {summary['rows_all_segments_invalid_or_empty']:,}")
+    lines.append(f"Output rows written:                {summary['output_rows']:,}")
+    lines.append("")
+    lines.append("=== Options ===")
+    lines.append(f"Target column:         {args.column!r}")
+    lines.append(f"Row separator (norm):  {normalize_token(args.row_sep, args.html_unescape)!r}")
+    lines.append(f"Value separator:       {normalize_token(args.value_sep, args.html_unescape)!r}")
+    lines.append(f"Gene/Cell separator:   {normalize_token(args.gene_sep, args.html_unescape)!r}")
+    lines.append(f"New columns:           {args.new_cols}")
+    lines.append(f"HTML unescape:         {bool(args.html_unescape)}")
+    lines.append(f"Skip invalid:          {bool(args.skip_invalid)}")
+    lines.append(f"Dropped original col:  {bool(args.drop_original_column)}")
+    lines.append("")
+    lines.append("=== I/O ===")
+    lines.append(f"Input delimiter:       raw={args.in_delim!r}  normalized={in_delim_norm!r}")
+    lines.append(f"Output delimiter:      raw={args.out_delim!r} normalized={out_delim_norm!r}")
+    return "\n".join(lines)
+
+
+# ----------------------------- CLI -------------------------------------------
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Explode a packed enrichment column into rows and new columns (robust, with summary)."
+    )
+    ap.add_argument("-i", "--input", required=True, help="Input file path (CSV/TSV).")
+    ap.add_argument("-o", "--output", required=True, help="Output file path.")
+    ap.add_argument(
+        "-c", "--column", required=True,
+        help="Name of the column to split (e.g., 'ChEMBL_HGNC_enrichment')."
+    )
+    ap.add_argument(
+        "--row-sep", default="&",
+        help="Separator between entries to explode into rows (default: '&')."
+    )
+    ap.add_argument(
+        "--value-sep", default=":",
+        help="Separator between numeric value and the rest (default: ':')."
+    )
+    ap.add_argument(
+        "--gene-sep", default="-",
+        help="Separator between gene and cell type (first occurrence; default: '-')."
+    )
+    ap.add_argument(
+        "--new-cols", nargs=3, default=["enrichment_value", "Gene", "Cell type"],
+        help="Names of the new columns to create (exactly three)."
+    )
+    ap.add_argument(
+        "--in-delim", default="auto",
+        help=r"Input delimiter: 'auto' (default), ',', '\t', ';', '|', 'tab', 'comma', etc."
+    )
+    ap.add_argument(
+        "--out-delim", default=None,
+        help=r"Output delimiter (default: same as normalized input, otherwise ',')."
+    )
+    ap.add_argument(
+        "--encoding", default="utf-8-sig",
+        help="File encoding for input and output (default: utf-8-sig; Excel-friendly)."
+    )
+    ap.add_argument(
+        "--html-unescape", action="store_true",
+        help="Convert HTML entities (e.g., '&amp;') before splitting."
+    )
+    ap.add_argument(
+        "--skip-invalid", action="store_true",
+        help="Skip segments that do not match expected separators."
+    )
+    ap.add_argument(
+        "--drop-original-column", action="store_true",
+        help="Drop the packed original column from the output."
+    )
+
+    args = ap.parse_args()
+
+    # Detect and normalize input delimiter
+    in_delim_raw = args.in_delim
+    if in_delim_raw == "auto":
+        in_delim_raw = sniff_delimiter(args.input, encoding=args.encoding, fallback=",")
+    in_delim_norm = normalize_delim(in_delim_raw)
+
+    # Decide and normalize output delimiter
+    out_delim_raw = args.out_delim if args.out_delim is not None else in_delim_norm or ","
+    out_delim_norm = normalize_delim(out_delim_raw)
+
+    # Validate single-character delimiters
+    if in_delim_norm is None or len(in_delim_norm) != 1:
+        print(
+            f"ERROR: Invalid --in-delim {args.in_delim!r} -> normalized {in_delim_norm!r}. "
+            "Provide a single-character delimiter (e.g., '\\t', 'tab', ',', ';', '|').",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if out_delim_norm is None or len(out_delim_norm) != 1:
+        print(
+            f"ERROR: Invalid --out-delim {args.out_delim!r} -> normalized {out_delim_norm!r}. "
+            "Provide a single-character delimiter (e.g., '\\t', 'tab', ',', ';', '|').",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Read input (keep strings to avoid accidental type coercion)
+    try:
+        df = pd.read_csv(
+            args.input, sep=in_delim_norm, dtype=str, encoding=args.encoding, engine="python"
+        )
+    except Exception as e:
+        print(f"ERROR: Failed to read input file '{args.input}': {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Explode
+    try:
+        exploded, summary = explode_packed_column(
+            df=df,
+            target_col=args.column,
+            row_sep=args.row_sep,
+            value_sep=args.value_sep,
+            gene_sep=args.gene_sep,
+            new_cols=args.new_cols,
+            html_unescape_opt=args.html_unescape,
+            skip_invalid=args.skip_invalid,
+        )
+    except Exception as e:
+        print(f"ERROR: Failed to process column '{args.column}': {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Optionally drop original packed column
+    if args.drop_original_column and args.column in exploded.columns:
+        exploded = exploded.drop(columns=[args.column])
+
+    # Save output
+    try:
+        exploded.to_csv(args.output, sep=out_delim_norm, index=False, encoding=args.encoding)
+    except Exception as e:
+        print(f"ERROR: Failed to write output file '{args.output}': {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Print summary + IO details
+    print(f"Done. Wrote {len(exploded):,} rows to {args.output}")
+    print(format_summary(summary, args, in_delim_norm, out_delim_norm))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## 6-III CLI help
+
+```txt
+
+split_enrichment.py — CLI Help
+================================
+
+Explode a “packed” enrichment column into multiple rows and add parsed columns.
+Typical packed cell format:
+  6.18:CHRNA1-myosatellite cells & 5.44:CHRNA1-myonuclei & 7.82:CHRNG-myonuclei
+
+For each segment, the script creates a new row and adds:
+  - enrichment_value (float)
+  - Gene
+  - Cell type
+
+USAGE
+-----
+python split_enrichment.py \
+  -i <INPUT.(csv|tsv)> \
+  -o <OUTPUT.(csv|tsv)> \
+  -c <COLUMN_NAME> \
+  [--row-sep <SEP>] [--value-sep <SEP>] [--gene-sep <SEP>] \
+  [--new-cols <VAL_COL> <GENE_COL> <CELL_COL>] \
+  [--in-delim <DELIM>] [--out-delim <DELIM>] \
+  [--encoding <ENC>] [--html-unescape] \
+  [--skip-invalid] [--drop-original-column]
+
+REQUIRED ARGUMENTS
+------------------
+-i, --input PATH            Input file (CSV/TSV).
+-o, --output PATH           Output file (CSV/TSV).
+-c, --column NAME           Packed column to explode (e.g., ChEMBL_HGNC_enrichment).
+
+OPTIONS
+-------
+--row-sep SEP               Between segments (default: &). Accepts "&", "&amp;", "\x26".
+--value-sep SEP             Between value and the rest (default: ":").
+--gene-sep SEP              Between gene and cell type (default: "-"; splits at FIRST occurrence).
+--new-cols A B C            Names for new columns (default: enrichment_value Gene "Cell type").
+
+--in-delim DELIM            Input delimiter. One of:
+                            auto (default), ',', ';', '|', 'tab', 'comma', 'semi', 'pipe',
+                            '\t', '\\t', '\x09', '\n', etc.
+--out-delim DELIM           Output delimiter (default: normalized value of --in-delim).
+--encoding ENC              File encoding (default: utf-8-sig; Excel-friendly).
+--html-unescape             Unescape HTML entities in TEXT and SEPARATORS (e.g., "&amp;" → "&").
+--skip-invalid              Drop segments that don’t match value:GENE-CELLTYPE strictly.
+--drop-original-column      Remove the original packed column from the output.
+
+PARSING RULES (STRICT)
+----------------------
+- A valid segment must be: <numeric_value><value-sep><GENE><gene-sep><CELLTYPE>
+- <numeric_value> must parse as float (e.g., 7.820308).
+- Gene/Cell split occurs at the FIRST occurrence of <gene-sep>.
+- Hyphens inside cell types are preserved (e.g., “fibro-adipogenic progenitors”).
+
+SUMMARY OUTPUT
+--------------
+After writing the file, the script prints a summary:
+- Input rows, rows with non-empty target
+- Total/valid/invalid segments
+- Segments dropped (if --skip-invalid)
+- Rows with all invalid/empty segments
+- Output rows written
+- Normalized delimiters and options used
+
+EXAMPLES
+--------
+1) TSV in/out, HTML unescape, skip invalid, drop original:
+   bash/zsh:
+     python split_enrichment.py \
+       -i chembl.tsv \
+       -o enriched.tsv \
+       -c ChEMBL_HGNC_enrichment \
+       --row-sep "&amp;" --value-sep ":" --gene-sep "-" \
+       --new-cols enrichment_value Gene "Cell type" \
+       --in-delim "\t" --out-delim "\t" \
+       --html-unescape --skip-invalid --drop-original-column
+
+   PowerShell:
+     python split_enrichment.py `
+       -i chembl.tsv `
+       -o enriched.tsv `
+       -c ChEMBL_HGNC_enrichment `
+       --row-sep "&amp;" --value-sep ":" --gene-sep "-" `
+       --new-cols enrichment_value Gene "Cell type" `
+       --in-delim tab --out-delim tab `
+       --html-unescape --skip-invalid --drop-original-column
+
+2) Auto-detect input delimiter, output matches input:
+   python split_enrichment.py -i data.csv -o data_exploded.csv -c packed_col --row-sep "&"
+
+TROUBLESHOOTING
+---------------
+- Error: "delimiter must be a 1-character string"
+  → Use normalized tokens: --in-delim tab (or "\t"), --out-delim tab (or "\t").
+- Header mismatch:
+  → Ensure --column matches EXACT column name in the file (copy/paste if needed).
+- No rows produced:
+  → Check separators (--row-sep/--value-sep/--gene-sep) and consider --html-unescape if the file contains "&amp;".
+
+EXIT CODES
+----------
+0  Success
+1  Read/Write/Argument/Processing error
+
+VERSION
+-------
+split_enrichment.py — robust CLI with delimiter & HTML normalization, summary reporting.
+```
+
+## 6-IV Run command
+
+```bash
+
+python split_enrichment.py \
+  -i chembl_with_enrichment_scored_empties_filled.tsv \
+  -o drug_targets_and_cell_type_enrichment.tsv \
+  -c ChEMBL_HGNC_enrichment \
+  --row-sep "&" \
+  --value-sep ":" \
+  --gene-sep "-" \
+  --new-cols enrichment_value Gene "Cell type" \
+  --in-delim "\t" \
+  --out-delim "\t" \
+  --html-unescape \
+  --drop-original-column \
+  --skip-invalid
+```
 
