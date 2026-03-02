@@ -2192,3 +2192,11 @@ python universal_plot_maker_plus.py \
   --pt-anchor "#rowDetails" --pt-position after \
   --pt-offset-x -300 --pt-offset-y -10
 ```
+
+# 6) Splitting dataset to see more details
+
+# 6-I Introduction
+
+I only selected and compared the maximum enrichment values for each drug/ drug target so far. It could be udeful to see all the different enrichment values for target genes, mean, avg etc at once for each gene. Therefore I am splitting the column 'ChEMBL_HGNC_enrichment' to multiple rows here.
+
+
