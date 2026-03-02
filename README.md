@@ -2853,7 +2853,7 @@ python universal_plot_maker_plus.py \
   --search-cols "Max Phase|Parent Molecule Name|Parent Molecule Type|First Approval|Target Name|Action Type|Warning Type|Warning Class" \
   --details "Parent Molecule ChEMBL ID|Parent Molecule Name|Parent Molecule Type|Max Phase|First Approval|Target ChEMBL ID|Target Name|Action Type|ChEMBL_HGNC|Warning Type|Warning Class|Description|Country|First Withdrawn Year|EFO ID|EFO Term|Cell_type_with_max_enrichment|Max_penalized_enrichment_value|Gene name|Cell type|Present tissues" \
   --title "Drug targets with tissue data V1" \
-  --dup-policy max \
+  --dup-policy overlay \
   --sort-primary "enrichment_value" \
   --sort-primary-order desc \
   --sort-secondary "Target Name" \
