@@ -2798,6 +2798,80 @@ I am doing this as this can be confusing
 ```
 sed 's/\bPenalized_enrichment_value\b/Max_penalized_enrichment_value/' drug_targets_and_cell_type_enrichment.tsv > name_fixed_drug_targets_and_cell_type_enrichment.tsv
 ```
+# 7) Adding tissue expression data
 
+## 7-I Introduction
 
+Now that all the different expression values for different genes targeted by a certain gene and all the cell types they are expressed in are shown in the main plot, I can add tissue expression profile as the subplot
 
+## 7-II Script
+
+I am using my merge_tsv_by_keys.py script for this from
+
+```url
+https://github.com/TharinduTS/cell_type_enrichment_v2#1-ii-merge-script
+```
+
+## 7-III Run command
+
+```py
+python merge_tsv_by_keys.py \
+  --left name_fixed_drug_targets_and_cell_type_enrichment.tsv \
+  --right Final_data_with_tissue_expression_data.tsv \
+  --left-keys "Gene","Cell type" \
+  --right-keys "Gene name","Cell type" \
+  --right-cols "overall_rank_by_Cell_type,overall_rank_by_Cell_type_group,Present tissues" \
+  --out  drug_targets_with_cell_and_tissue_data.tsv
+```
+
+# 8) Making inteactive plots with tissue data
+
+Then I did plot it with my interactive plot maker script
+
+## 8-I Script 
+
+The updated script can be found in
+
+```url
+https://github.com/TharinduTS/universal_plot_maker_plus_with_subplot/blob/main/README.md#improved-script
+```
+
+## 8-II Run command
+
+```bash
+python universal_plot_maker_plus.py \
+  --file drug_targets_with_cell_and_tissue_data.tsv \
+  --out drug_target_cell_type_enrichment.html \
+  --plot-type bar \
+  --x-choices "Parent Molecule ChEMBL ID | Parent Molecule Name | Target ChEMBL ID | Target Name | Gene name" \
+  --y-choices "enrichment_value|Max_penalized_enrichment_value|overall_rank_by_Cell_type|overall_rank_by_Cell_type_group" \
+  --default-x "Target ChEMBL ID" \
+  --default-y "enrichment_value" \
+  --color-col "Max Phase" \
+  --color-choices "Max Phase|Parent Molecule Name|Parent Molecule Type|First Approval|Target Name|Action Type|Warning Type|Warning Class|Present tissues" \
+  --filter-cols "Max Phase|Parent Molecule Name|Parent Molecule Type|First Approval|Target Name|Action Type|Warning Type|Warning Class" \
+  --search-cols "Max Phase|Parent Molecule Name|Parent Molecule Type|First Approval|Target Name|Action Type|Warning Type|Warning Class" \
+  --details "Parent Molecule ChEMBL ID|Parent Molecule Name|Parent Molecule Type|Max Phase|First Approval|Target ChEMBL ID|Target Name|Action Type|ChEMBL_HGNC|Warning Type|Warning Class|Description|Country|First Withdrawn Year|EFO ID|EFO Term|Cell_type_with_max_enrichment|Max_penalized_enrichment_value|Gene name|Cell type|Present tissues" \
+  --title "Drug targets with tissue data V1" \
+  --dup-policy max \
+  --sort-primary "enrichment_value" \
+  --sort-primary-order desc \
+  --sort-secondary "Target Name" \
+  --sort-secondary-order asc \
+  --initial-zoom 100 \
+  --self-contained \
+  --lang en \
+  --pt-enable \
+  --pt-col "Present tissues" \
+  --pt-title "Enrichment per present tissue" \
+  --pt-x-label "Tissue" \
+  --pt-y-label "log2 Enrichment Penalized" \
+  --pt-color "#2a9d8f" \
+  --pt-height 360 \
+  --pt-width auto \
+  --pt-rotate -35 \
+  --pt-container-id "present-tissues-plot" \
+  --pt-enable --pt-mode flow \
+  --pt-anchor "#rowDetails" --pt-position after \
+  --pt-offset-x -300 --pt-offset-y -10
+```
