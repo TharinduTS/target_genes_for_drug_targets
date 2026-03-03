@@ -3220,7 +3220,7 @@ python topn_by_groups.py \
   -o selected_top_data_to_plot.tsv \
   -g "Parent Molecule ChEMBL ID,Gene name" \
   -v enrichment_value \
-  -n 5
+  -n 3
 ```
 
 
@@ -3243,7 +3243,7 @@ python universal_plot_maker_plus.py \
   --file selected_top_data_to_plot.tsv \
   --out drug_target_cell_type_enrichment.html \
   --plot-type bar \
-  --x-choices "Parent Molecule ChEMBL ID | Parent Molecule Name | Target ChEMBL ID | Target Name | Gene name| First Approval" \
+  --x-choices "Parent Molecule ChEMBL ID | Parent Molecule Name | Target ChEMBL ID | Target Name | Gene name" \
   --y-choices "enrichment_value|Max_penalized_enrichment_value|overall_rank_by_Cell_type|overall_rank_by_Cell_type_group" \
   --default-x "Target ChEMBL ID" \
   --default-y "enrichment_value" \
