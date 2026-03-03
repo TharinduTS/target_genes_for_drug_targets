@@ -2823,12 +2823,412 @@ python merge_tsv_by_keys.py \
   --right-cols "overall_rank_by_Cell_type,overall_rank_by_Cell_type_group,Present tissues" \
   --out  drug_targets_with_cell_and_tissue_data.tsv
 ```
+# 8) Selecting data to plot
 
-# 8) Making inteactive plots with tissue data
+## 8-I
+
+This section is here just because plotting millions of data points is not only useless, but it makes it impossible for computers to handle it
+
+I select the top n number of rows for each drug*gene combinationhere
+
+## 8-II Script 
+
+topn_by_groups.py
+
+```py
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Extract top-N rows within categories (groups) based on a value column,
+with a clear summary of input size, filtered rows, groups, and output size.
+
+Supports: CSV, TSV (auto-detect), Excel (.xlsx/.xls).
+"""
+
+import argparse
+import sys
+from pathlib import Path
+import pandas as pd
+
+
+# ---------- Utilities ----------
+
+def parse_col_list(s: str):
+    if s is None:
+        return []
+    return [c.strip() for c in s.split(",") if c.strip()]
+
+
+def load_table(path: str, sheet: str | None, sep: str | None, encoding: str):
+    ext = Path(path).suffix.lower()
+    if ext in {".xlsx", ".xlsm", ".xltx", ".xltm"}:
+        return pd.read_excel(path, sheet_name=sheet, engine="openpyxl")
+    elif ext == ".xls":
+        return pd.read_excel(path, sheet_name=sheet, engine="xlrd")
+    else:
+        if sep is not None:
+            return pd.read_csv(path, sep=sep, encoding=encoding)
+        # Auto-detect delimiter (comma, tab, etc.)
+        return pd.read_csv(path, sep=None, engine="python", encoding=encoding)
+
+
+def save_table(df: pd.DataFrame, path: str, output_format: str | None, index: bool = False):
+    out_path = Path(path)
+    fmt = (output_format or out_path.suffix.lower().lstrip(".") or "csv").lower()
+
+    if fmt in {"csv"}:
+        df.to_csv(out_path, index=index)
+    elif fmt in {"tsv", "tab"}:
+        df.to_csv(out_path, sep="\t", index=index)
+    elif fmt in {"xlsx", "xlsm", "xltx", "xltm"}:
+        with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+            df.to_excel(writer, index=index, sheet_name="topN")
+    else:
+        df.to_csv(out_path.with_suffix(".csv"), index=index)
+        print(f"[info] Unknown output format '{fmt}'. Wrote CSV to {out_path.with_suffix('.csv')}", file=sys.stderr)
+
+
+def validate_columns(df: pd.DataFrame, cols: list[str], context: str):
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        raise SystemExit(
+            f"[error] {context}: Column(s) not found: {missing}\n"
+            f"        Available columns: {list(df.columns)}"
+        )
+
+
+def topn_per_group(
+    df: pd.DataFrame,
+    group_cols: list[str],
+    value_col: str,
+    n: int,
+    ascending: bool = False,
+    keep_ties: bool = False,
+    dropna_value: bool = False,
+):
+    # Work on a copy and record pre-coercion
+    df = df.copy()
+
+    # Coerce to numeric, tracking non-numeric (becomes NaN)
+    before_non_numeric = df[value_col].isna().sum()
+    coerced = pd.to_numeric(df[value_col], errors="coerce")
+    coerced_non_numeric = coerced.isna().sum()
+    # Note: coerced_non_numeric >= before_non_numeric. The delta shows how many
+    # were non-numeric strings that turned into NaN.
+
+    df[value_col] = coerced
+
+    # Optionally drop NaNs in value column
+    if dropna_value:
+        df = df[df[value_col].notna()]
+
+    # Core selection
+    if not keep_ties:
+        if ascending:
+            picked = df.groupby(group_cols, group_keys=False) \
+                       .apply(lambda g: g.nsmallest(n, columns=value_col))
+        else:
+            picked = df.groupby(group_cols, group_keys=False) \
+                       .apply(lambda g: g.nlargest(n, columns=value_col))
+    else:
+        # Rank so that 1 = extreme (min when ascending, max otherwise)
+        ranks = df.groupby(group_cols, group_keys=False)[value_col] \
+                  .rank(method="min", ascending=ascending)
+        picked = df[ranks <= n]
+
+    # Stable sort by groups and value
+    picked = picked.sort_values(
+        group_cols + [value_col],
+        ascending=[True] * len(group_cols) + [ascending],
+        kind="mergesort"
+    )
+
+    # Build summary metrics
+    summary = {
+        "input_rows": None,  # to be filled by caller (original df size)
+        "post_coercion_rows": len(df),  # after optional dropna
+        "value_col_na_after_coercion": coerced_non_numeric,
+        "dropped_due_to_dropna": None,  # to be filled by caller
+        "group_columns": group_cols,
+        "value_column": value_col,
+        "groups_found": df.groupby(group_cols).ngroups,
+        "topn": n,
+        "ascending": bool(ascending),
+        "keep_ties": bool(keep_ties),
+        "rows_kept": len(picked),
+        "rows_dropped_total_from_input": None,  # to be filled by caller
+    }
+
+    return picked, summary
+
+
+def summarize_per_group(df_in: pd.DataFrame, df_out: pd.DataFrame, group_cols: list[str], value_col: str, n: int, keep_ties: bool):
+    """
+    Return a per-group summary with counts:
+      - input_count
+      - output_count
+      - dropped_count
+      - top_threshold_value (the Nth value used for cut if keep_ties=True)
+    """
+    # Input counts per group
+    inp_counts = df_in.groupby(group_cols, dropna=False).size().rename("input_count").reset_index()
+
+    # Output counts per group
+    out_counts = df_out.groupby(group_cols, dropna=False).size().rename("output_count").reset_index()
+
+    # Merge and compute dropped_count
+    per_group = pd.merge(inp_counts, out_counts, on=group_cols, how="left").fillna({"output_count": 0})
+    per_group["output_count"] = per_group["output_count"].astype(int)
+    per_group["dropped_count"] = per_group["input_count"] - per_group["output_count"]
+
+    # If keep_ties, include the threshold value per group (Nth extreme)
+    if keep_ties:
+        def nth_threshold(g: pd.DataFrame) -> float | None:
+            if len(g) == 0:
+                return None
+            # Sort by extreme (descending by default, ascending if we had chosen it)
+            # We don't know ascending here, so infer by comparing df_out with df_in:
+            # Safer: compute the Nth largest threshold directly
+            vals = pd.to_numeric(g[value_col], errors="coerce").dropna().sort_values(ascending=False)
+            if len(vals) < 1:
+                return None
+            if len(vals) < n:
+                return vals.iloc[-1] if len(vals) > 0 else None
+            return vals.iloc[n-1]
+
+        # Note: This uses Nth *largest* as representative threshold. If you selected --ascending,
+        # this threshold won't reflect that. For exact ascending thresholds, we could pass a flag.
+        # To keep the interface simple, we only show a largest-based threshold here.
+        # (You can ignore or remove this block if it confuses the workflow.)
+        # per-group threshold optional feature disabled by default for clarity.
+        pass
+
+    return per_group
+
+
+# ---------- CLI ----------
+
+def main():
+    p = argparse.ArgumentParser(
+        description="Extract top-N rows per category based on a numeric value column, with a concise summary.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    p.add_argument("-i", "--input", required=True, help="Input file path (CSV/TSV/XLSX/XLS).")
+    p.add_argument("-o", "--output", required=True, help="Output file path (CSV/TSV/XLSX).")
+    p.add_argument("-g", "--group-cols", required=True,
+                   help='Comma-separated group-by columns, e.g. "Parent Molecule ChEMBL ID,Gene name".')
+    p.add_argument("-v", "--value-col", required=True,
+                   help="Numeric value column used for ranking (e.g., enrichment_value).")
+    p.add_argument("-n", "--topn", type=int, default=1, help="Number of rows to keep per group.")
+    p.add_argument("--ascending", action="store_true",
+                   help="Select smallest values instead of largest.")
+    p.add_argument("--keep-ties", action="store_true",
+                   help="Keep all rows tied at the N-th value in each group.")
+    p.add_argument("--dropna", action="store_true",
+                   help="Drop rows where value-col is NaN after numeric coercion.")
+    p.add_argument("--sep", default=None,
+                   help=r"Field delimiter for CSV/TSV (e.g., '\t'). If not set, auto-detect.")
+    p.add_argument("--encoding", default="utf-8", help="Text encoding for CSV/TSV.")
+    p.add_argument("--sheet", default=None, help="Excel sheet name (for Excel input).")
+    p.add_argument("--output-format", default=None,
+                   help="Force output format: csv | tsv | xlsx (otherwise inferred from extension).")
+    p.add_argument("--no-index", action="store_true", help="Do not write DataFrame index.")
+    p.add_argument("--summary-file", default=None,
+                   help="Optional path to write a machine-readable summary (CSV/TSV/XLSX inferred by extension).")
+    p.add_argument("--summary-per-group-file", default=None,
+                   help="Optional path to write per-group counts (CSV/TSV/XLSX inferred).")
+    args = p.parse_args()
+
+    group_cols = parse_col_list(args.group_cols)
+
+    # Load
+    df_in = load_table(args.input, sheet=args.sheet, sep=args.sep, encoding=args.encoding)
+    input_rows = len(df_in)
+
+    # Validate columns
+    validate_columns(df_in, group_cols, "group-cols")
+    validate_columns(df_in, [args.value_col], "value-col")
+
+    # Compute
+    picked, summary = topn_per_group(
+        df=df_in,
+        group_cols=group_cols,
+        value_col=args.value_col,
+        n=args.topn,
+        ascending=args.ascending,
+        keep_ties=args.keep_ties,
+        dropna_value=args.dropna,
+    )
+
+    # Fill in summary fields that depend on input size
+    summary["input_rows"] = input_rows
+    summary["dropped_due_to_dropna"] = input_rows - summary["post_coercion_rows"]
+    summary["rows_dropped_total_from_input"] = input_rows - summary["rows_kept"]
+
+    # Save output
+    save_table(picked, args.output, output_format=args.output_format, index=not args.no_index)
+
+    # Optional per-group file
+    if args.summary_per_group_file:
+        per_group = summarize_per_group(
+            df_in=df_in,
+            df_out=picked,
+            group_cols=group_cols,
+            value_col=args.value_col,
+            n=args.topn,
+            keep_ties=args.keep_ties
+        )
+        save_table(per_group, args.summary_per_group_file, output_format=None, index=False)
+
+    # Optional summary file (single-row table)
+    if args.summary_file:
+        summary_df = pd.DataFrame([summary])
+        save_table(summary_df, args.summary_file, output_format=None, index=False)
+
+    # Human-readable summary to stderr
+    print("\n==== Summary ====", file=sys.stderr)
+    print(f"Input file:               {args.input}", file=sys.stderr)
+    print(f"Output file:              {args.output}", file=sys.stderr)
+    if args.summary_file:
+        print(f"Summary file:             {args.summary_file}", file=sys.stderr)
+    if args.summary_per_group_file:
+        print(f"Per-group summary file:   {args.summary_per_group_file}", file=sys.stderr)
+    print(f"Columns (group-by):       {group_cols}", file=sys.stderr)
+    print(f"Value column:             {args.value_col}", file=sys.stderr)
+    print(f"Top-N:                    {args.topn}", file=sys.stderr)
+    print(f"Order:                    {'smallest (ascending)' if args.ascending else 'largest (descending)'}", file=sys.stderr)
+    print(f"Keep ties:                {args.keep_ties}", file=sys.stderr)
+    print(f"Drop NaN after coercion:  {args.dropna}", file=sys.stderr)
+    print(f"--------------------------", file=sys.stderr)
+    print(f"Initial rows:             {summary['input_rows']:,}", file=sys.stderr)
+    print(f"Rows after dropna:        {summary['post_coercion_rows']:,} "
+          f"({summary['dropped_due_to_dropna']:,} dropped due to NaN/coercion)", file=sys.stderr)
+    print(f"Groups found:             {summary['groups_found']:,}", file=sys.stderr)
+    print(f"Rows kept (output):       {summary['rows_kept']:,}", file=sys.stderr)
+    print(f"Rows dropped (overall):   {summary['rows_dropped_total_from_input']:,}", file=sys.stderr)
+    print(f"==========================\n", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## 8-III CLI help
+
+```txt
+Usage:
+  python topn_by_groups.py -i INPUT -o OUTPUT -g GROUP_COLS -v VALUE_COL [options]
+
+Extract top‑N rows per category (group) based on a numeric value column.
+Supports CSV, TSV (auto‑detect), and Excel (.xlsx/.xls). Designed for large
+tables where you need the highest or lowest values per group.
+
+Required arguments:
+  -i, --input FILE
+        Input file (CSV / TSV / XLSX / XLS). Delimiter auto‑detected unless
+        overridden with --sep.
+
+  -o, --output FILE
+        Output file (CSV / TSV / XLSX). Format inferred from extension unless
+        overridden with --output-format.
+
+  -g, --group-cols "COL1,COL2,..."
+        Comma‑separated list of columns to group by. Quote if columns contain
+        spaces.
+
+  -v, --value-col COL
+        Column containing numeric values used for ranking.
+
+  -n, --topn N
+        Number of rows to keep per group (default: 1).
+
+Ranking options:
+  --ascending
+        Select smallest values instead of largest.
+
+  --keep-ties
+        Include all rows tied at the Nth rank within each group.
+
+  --dropna
+        Drop rows where value-col is NaN after numeric coercion.
+
+Input/output behavior:
+  --sep SEP
+        Field delimiter for CSV/TSV (e.g., $'\t'). If omitted, auto-detected.
+
+  --encoding ENCODING
+        Text encoding (default: utf‑8).
+
+  --sheet NAME
+        Sheet name for Excel input.
+
+  --output-format {csv,tsv,xlsx}
+        Force output format if not using standard extensions.
+
+  --no-index
+        Do not write DataFrame index to output.
+
+Summary reporting:
+  --summary-file FILE
+        Write a machine‑readable one‑line summary of the run (CSV/TSV/XLSX).
+
+  --summary-per-group-file FILE
+        Write counts per group (input/output/dropped) to a separate table.
+
+Description of summary:
+    • Initial rows read
+    • Rows dropped due to NaN / conversion
+    • Total groups found
+    • Rows kept after top‑N selection
+    • Total rows dropped from input
+
+Examples:
+  # Top 1 highest enrichment_value per (Parent Molecule, Gene) from TSV
+  python topn_by_groups.py \
+      -i input.tsv \
+      -o top_hits.tsv \
+      -g "Parent Molecule ChEMBL ID,Gene name" \
+      -v enrichment_value \
+      -n 1
+
+  # Top 3 smallest p-values per (condition, tissue)
+  python topn_by_groups.py \
+      -i data.csv \
+      -o top3.csv \
+      -g "condition,tissue" \
+      -v pvalue \
+      -n 3 --ascending --keep-ties
+
+  # With summary files
+  python topn_by_groups.py \
+      -i input.tsv \
+      -o output.tsv \
+      -g "A,B" \
+      -v score \
+      -n 1 \
+      --summary-file run_summary.tsv \
+      --summary-per-group-file group_counts.tsv
+
+```
+
+## 8-IV Run command
+
+```bash
+python topn_by_groups.py \
+  -i drug_targets_with_cell_and_tissue_data.tsv \
+  -o selected_top_data_to_plot.tsv \
+  -g "Parent Molecule ChEMBL ID,Gene name" \
+  -v enrichment_value \
+  -n 5
+```
+
+
+# 9) Making inteactive plots with tissue data
 
 Then I did plot it with my interactive plot maker script
 
-## 8-I Script 
+## 9-I Script 
 
 The updated script can be found in
 
@@ -2836,14 +3236,14 @@ The updated script can be found in
 https://github.com/TharinduTS/universal_plot_maker_plus_with_subplot/blob/main/README.md#improved-script
 ```
 
-## 8-II Run command
+## 9-II Run command
 
 ```bash
 python universal_plot_maker_plus.py \
-  --file drug_targets_with_cell_and_tissue_data.tsv \
+  --file selected_top_data_to_plot.tsv \
   --out drug_target_cell_type_enrichment.html \
   --plot-type bar \
-  --x-choices "Parent Molecule ChEMBL ID | Parent Molecule Name | Target ChEMBL ID | Target Name | Gene name" \
+  --x-choices "Parent Molecule ChEMBL ID | Parent Molecule Name | Target ChEMBL ID | Target Name | Gene name| First Approval" \
   --y-choices "enrichment_value|Max_penalized_enrichment_value|overall_rank_by_Cell_type|overall_rank_by_Cell_type_group" \
   --default-x "Target ChEMBL ID" \
   --default-y "enrichment_value" \
