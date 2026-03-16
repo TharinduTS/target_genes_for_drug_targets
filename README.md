@@ -1429,6 +1429,8 @@ column as specified.
 
 ## 3-IV Run command
 
+#*****NOTE THAT I AM USING TWO '&' AS ITEM SEPERATOR SO IT DOES NOT GET CONFUSING WITH THE CELL TYPE "mural & epithelial cells" ****
+
 ```bash
 python gene_enrichment_join.py \
   --table1 drug_info_with_genes_and_warnings_fully_cleaned.tsv \
@@ -1441,7 +1443,7 @@ python gene_enrichment_join.py \
   --t2-value-col "log2_enrichment_penalized" \
   --gene-key-sep "-" \
   --pair-sep ":" \
-  --item-sep " & " \
+  --item-sep " && " \
   --newcol-name "ChEMBL_HGNC_enrichment"
 ```
 ## 3-V selecting maximum enrichment
