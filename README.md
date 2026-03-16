@@ -1429,7 +1429,7 @@ column as specified.
 
 ## 3-IV Run command
 
-#*****NOTE THAT I AM USING TWO '&' AS ITEM SEPERATOR SO IT DOES NOT GET CONFUSING WITH THE CELL TYPE "mural & epithelial cells" ****
+#*****NOTE THAT I AM USING TWO '&' signs AS ITEM SEPERATOR SO IT DOES NOT GET CONFUSING WITH THE CELL TYPE "mural & epithelial cells" ****
 
 ```bash
 python gene_enrichment_join.py \
@@ -1735,7 +1735,7 @@ python extract_extreme_enrichment.py \
   --input chembl_with_enrichment.tsv \
   --output chembl_with_enrichment_scored.tsv \
   --source-col "ChEMBL_HGNC_enrichment" \
-  --item-sep " & " \
+  --item-sep " && " \
   --gene-key-sep "-" \
   --pair-sep ":" \
   --agg max \
