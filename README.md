@@ -2782,7 +2782,7 @@ python split_enrichment.py \
   -i chembl_with_enrichment_scored_empties_filled.tsv \
   -o drug_targets_and_cell_type_enrichment.tsv \
   -c ChEMBL_HGNC_enrichment \
-  --row-sep "&" \
+  --row-sep "&&" \
   --value-sep ":" \
   --gene-sep "-" \
   --new-cols enrichment_value Gene "Cell type" \
