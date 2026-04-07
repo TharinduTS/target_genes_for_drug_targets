@@ -6,7 +6,7 @@
 
 I am trying to see whether there is a connection between the success of drugs (whether they made into testing phases 2,3,4 etc) and the cell specificity of their drug targets.
 
-I started by downloading the list of drugs with their MOA (Mechanism of Action) for humans from 'https://www.ebi.ac.uk/chembl/explore/drug_mechanisms/STATE_ID:YB5SeM-jQgB2RiRcCSv8sA%3D%3D'
+I started by downloading the list of drugs with their MOA (Mechanism of Action) for humans from 'https://www.ebi.ac.uk/chembl/explore/drug_mechanisms'
 
 The download looks like following
 
